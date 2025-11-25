@@ -4,7 +4,7 @@ Cost estimation endpoints
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, status
 
-from app.integrations.supabase import get_estimate
+from app.integrations.supabase import get_project
 from app.middleware.rate_limit import HEAVY_LIMIT, limiter
 from app.schemas.estimate import EstimateStatusResponse
 from app.schemas.project import ProjectInput
@@ -58,7 +58,7 @@ async def get_estimate_status(request: Request, estimate_id: str):
     Returns:
         EstimateStatusResponse: Current status and progress
     """
-    estimate_data = await get_estimate(estimate_id)
+    estimate_data = await get_project(estimate_id)
 
     if not estimate_data:
         raise HTTPException(
@@ -95,7 +95,7 @@ async def get_estimate_details(request: Request, estimate_id: str):
     Returns:
         EstimateResponse: Full estimate with pricing details
     """
-    estimate_data = await get_estimate(estimate_id)
+    estimate_data = await get_project(estimate_id)
 
     if not estimate_data:
         raise HTTPException(

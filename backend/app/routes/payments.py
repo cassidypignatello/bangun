@@ -9,8 +9,8 @@ from fastapi import APIRouter, HTTPException, Request, status
 from app.config import get_settings
 from app.integrations.midtrans import create_payment_transaction, verify_signature
 from app.integrations.supabase import (
-    save_transaction,
-    update_transaction_status,
+    save_payment,
+    update_payment_status,
 )
 from app.middleware.rate_limit import HEAVY_LIMIT, limiter
 from app.schemas.payment import MidtransWebhook, UnlockRequest, UnlockResponse
@@ -54,7 +54,7 @@ async def unlock_worker_details(request: Request, unlock_req: UnlockRequest):
             "created_at": datetime.utcnow().isoformat(),
         }
 
-        await save_transaction(transaction_data)
+        await save_payment(transaction_data)
 
         return UnlockResponse(
             transaction_id=transaction["transaction_id"],
@@ -114,9 +114,9 @@ async def midtrans_webhook(webhook: MidtransWebhook):
 
     # Update transaction in database
     try:
-        await update_transaction_status(
-            transaction_id=webhook.order_id,
-            status=internal_status,
+        await update_payment_status(
+            webhook.order_id,
+            internal_status,
             midtrans_transaction_id=webhook.transaction_id,
             payment_type=webhook.payment_type,
             fraud_status=webhook.fraud_status,

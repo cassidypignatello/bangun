@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 
 from app.integrations.openai_client import generate_bom
-from app.integrations.supabase import save_estimate, update_estimate_status
+from app.integrations.supabase import save_project, update_project_status
 from app.schemas.estimate import BOMItem, EstimateResponse, EstimateStatus
 from app.schemas.project import ProjectInput
 from app.services.price_engine import enrich_bom_with_prices
@@ -41,7 +41,7 @@ async def create_estimate(project: ProjectInput) -> EstimateResponse:
     }
 
     # Save to database
-    await save_estimate(estimate_data)
+    await save_project(estimate_data)
 
     return EstimateResponse(
         estimate_id=estimate_id,
@@ -69,7 +69,7 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
     """
     try:
         # Update status to processing
-        await update_estimate_status(estimate_id, EstimateStatus.PROCESSING.value)
+        await update_project_status(estimate_id, EstimateStatus.PROCESSING.value)
 
         # Step 1: Generate BOM using GPT-4o-mini
         project_dict = {
@@ -107,7 +107,7 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
         grand_total = total_cost + labor_cost
 
         # Step 5: Update database with completed estimate
-        await update_estimate_status(
+        await update_project_status(
             estimate_id,
             EstimateStatus.COMPLETED.value,
             bom_items=[item.model_dump() for item in bom_items],
@@ -119,7 +119,7 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
 
     except Exception as e:
         # Update with error status
-        await update_estimate_status(
+        await update_project_status(
             estimate_id,
             EstimateStatus.FAILED.value,
             error_message=str(e),

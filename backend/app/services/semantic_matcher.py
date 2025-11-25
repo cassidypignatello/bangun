@@ -5,7 +5,7 @@ Two-tier semantic matching for materials: exact match + fuzzy matching
 from difflib import SequenceMatcher
 
 from app.integrations.openai_client import enhance_material_description
-from app.integrations.supabase import get_material_price_history
+from app.integrations.supabase import search_materials
 
 
 def calculate_similarity(str1: str, str2: str) -> float:
@@ -32,7 +32,7 @@ async def find_exact_match(material_name: str) -> dict | None:
     Returns:
         dict | None: Cached price data if found
     """
-    history = await get_material_price_history(material_name, limit=5)
+    history = await search_materials(material_name, limit=5)
 
     if not history:
         return None
@@ -63,7 +63,7 @@ async def find_fuzzy_match(material_name: str, threshold: float = 0.75) -> dict 
     Returns:
         dict | None: Best fuzzy match if above threshold
     """
-    history = await get_material_price_history(material_name, limit=20)
+    history = await search_materials(material_name, limit=20)
 
     if not history:
         return None

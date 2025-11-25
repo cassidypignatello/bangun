@@ -187,10 +187,12 @@ Set `ENV=production` and `DEBUG=false` in production.
 Database schema should be set up in Supabase:
 
 **Tables needed:**
-- `estimates` - Cost estimations
-- `material_prices` - Price cache
-- `workers` - Contractor profiles
-- `transactions` - Payment records
+- `projects` - Cost estimations and project data
+- `materials` - Construction materials catalog with pricing
+- `workers` - Contractor profiles with trust scores
+- `payments` - Midtrans payment records
+- `affiliate_clicks` - Revenue tracking
+- `scrape_jobs` - Apify job tracking
 
 ### Monitoring
 

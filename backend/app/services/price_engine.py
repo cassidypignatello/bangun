@@ -4,7 +4,6 @@ Combines semantic matching, scraping, and caching
 """
 
 from app.integrations.apify import calculate_median_price, scrape_tokopedia_prices
-from app.integrations.supabase import save_material_price
 from app.services.semantic_matcher import match_material, enhance_search_term
 
 
@@ -59,16 +58,8 @@ async def enrich_single_material(material: dict) -> dict:
             if median_price > 0:
                 total_price = int(median_price * quantity)
 
-                # Cache the result for future lookups
-                await save_material_price(
-                    {
-                        "material_name": material_name,
-                        "unit_price_idr": median_price,
-                        "unit": material["unit"],
-                        "source": "tokopedia",
-                        "marketplace_url": products[0]["url"],
-                    }
-                )
+                # Note: Prices are now embedded in materials table
+                # Use update_material_prices() for batch updates
 
                 return {
                     "material_name": material_name,

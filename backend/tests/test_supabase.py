@@ -203,26 +203,3 @@ class TestPaymentOperations:
             assert result["gateway_transaction_id"] == "MT-123"
 
 
-class TestBackwardCompatibility:
-    """Tests for backward compatibility aliases"""
-
-    @pytest.mark.asyncio
-    async def test_save_estimate_alias(self):
-        """save_estimate should alias to save_project"""
-        from app.integrations.supabase import save_estimate, save_project
-
-        assert save_estimate is save_project
-
-    @pytest.mark.asyncio
-    async def test_get_estimate_alias(self):
-        """get_estimate should alias to get_project"""
-        from app.integrations.supabase import get_estimate, get_project
-
-        assert get_estimate is get_project
-
-    @pytest.mark.asyncio
-    async def test_save_transaction_alias(self):
-        """save_transaction should alias to save_payment"""
-        from app.integrations.supabase import save_transaction, save_payment
-
-        assert save_transaction is save_payment

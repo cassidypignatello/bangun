@@ -4,7 +4,7 @@ Material pricing and catalog endpoints
 
 from fastapi import APIRouter, HTTPException, Request, status
 
-from app.integrations.supabase import get_material_price_history
+from app.integrations.supabase import search_materials
 from app.middleware.rate_limit import STANDARD_LIMIT, limiter
 
 router = APIRouter()
@@ -26,10 +26,10 @@ async def get_materials(
         list[dict]: Material pricing data
     """
     if search:
-        materials = await get_material_price_history(search, limit)
+        materials = await search_materials(search, limit)
     else:
         # Return recent materials if no search term
-        materials = await get_material_price_history("", limit)
+        materials = await search_materials("", limit)
 
     return {"materials": materials, "count": len(materials), "ok": True}
 
@@ -49,7 +49,7 @@ async def get_material_history(
     Returns:
         dict: Material price history
     """
-    history = await get_material_price_history(material_name, limit)
+    history = await search_materials(material_name, limit)
 
     if not history:
         raise HTTPException(

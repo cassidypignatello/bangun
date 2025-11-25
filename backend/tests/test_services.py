@@ -44,7 +44,7 @@ class TestSemanticMatcher:
     @pytest.mark.asyncio
     async def test_find_exact_match_found(self):
         """Should return match when similarity > 0.95"""
-        with patch("app.services.semantic_matcher.get_material_price_history") as mock_history:
+        with patch("app.services.semantic_matcher.search_materials") as mock_history:
             mock_history.return_value = [
                 {"material_name": "Semen Portland 50kg", "unit_price_idr": 65000}
             ]
@@ -60,7 +60,7 @@ class TestSemanticMatcher:
     @pytest.mark.asyncio
     async def test_find_exact_match_not_found(self):
         """Should return None when no exact match"""
-        with patch("app.services.semantic_matcher.get_material_price_history") as mock_history:
+        with patch("app.services.semantic_matcher.search_materials") as mock_history:
             mock_history.return_value = []
 
             from app.services.semantic_matcher import find_exact_match
@@ -72,7 +72,7 @@ class TestSemanticMatcher:
     @pytest.mark.asyncio
     async def test_find_fuzzy_match_found(self):
         """Should return best fuzzy match above threshold"""
-        with patch("app.services.semantic_matcher.get_material_price_history") as mock_history:
+        with patch("app.services.semantic_matcher.search_materials") as mock_history:
             mock_history.return_value = [
                 {"material_name": "Semen Portland Tiga Roda", "unit_price_idr": 65000},
                 {"material_name": "Semen Holcim", "unit_price_idr": 60000},
@@ -88,7 +88,7 @@ class TestSemanticMatcher:
     @pytest.mark.asyncio
     async def test_find_fuzzy_match_below_threshold(self):
         """Should return None when no match above threshold"""
-        with patch("app.services.semantic_matcher.get_material_price_history") as mock_history:
+        with patch("app.services.semantic_matcher.search_materials") as mock_history:
             mock_history.return_value = [
                 {"material_name": "Keramik 60x60", "unit_price_idr": 85000}
             ]

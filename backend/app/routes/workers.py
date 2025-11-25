@@ -4,7 +4,7 @@ Worker discovery and preview endpoints
 
 from fastapi import APIRouter, HTTPException, Request, status
 
-from app.integrations.supabase import get_worker_by_id, get_workers_for_project
+from app.integrations.supabase import get_worker_by_id, get_workers_by_specialization
 from app.middleware.rate_limit import STANDARD_LIMIT, limiter
 from app.schemas.worker import WorkerPreview
 from app.services.trust_calculator import create_trust_score, mask_worker_name
@@ -30,7 +30,7 @@ async def get_worker_previews(
     Returns:
         list[WorkerPreview]: Worker previews with trust scores
     """
-    workers = await get_workers_for_project(project_type, limit)
+    workers = await get_workers_by_specialization(project_type, limit=limit)
 
     previews = []
     for worker in workers:
