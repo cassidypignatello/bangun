@@ -148,7 +148,9 @@ async def get_material_by_code(material_code: str) -> dict | None:
 
 async def search_materials(query: str, limit: int = 10) -> list[dict]:
     """
-    Search materials by name (Indonesian or English) or aliases
+    Search materials by name (Indonesian or English) or aliases.
+
+    Results are cached for 1 hour to reduce database load.
 
     Args:
         query: Search query
@@ -157,6 +159,17 @@ async def search_materials(query: str, limit: int = 10) -> list[dict]:
     Returns:
         list[dict]: Matching materials
     """
+    from app.utils.cache import material_search_cache
+
+    # Build cache key
+    cache_key = f"search:{query.lower()}:{limit}"
+
+    # Try cache first
+    cached_result = await material_search_cache.get(cache_key)
+    if cached_result is not None:
+        return cached_result
+
+    # Query database
     supabase = get_supabase_client()
     response = (
         supabase.table("materials")
@@ -165,7 +178,12 @@ async def search_materials(query: str, limit: int = 10) -> list[dict]:
         .limit(limit)
         .execute()
     )
-    return response.data if response.data else []
+    result = response.data if response.data else []
+
+    # Cache for 1 hour
+    await material_search_cache.set(cache_key, result, ttl=3600)
+
+    return result
 
 
 async def get_materials_by_category(category: str) -> list[dict]:

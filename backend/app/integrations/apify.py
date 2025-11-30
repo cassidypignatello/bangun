@@ -151,8 +151,9 @@ async def scrape_tokopedia_prices(
     material_name: str, max_results: int = 5
 ) -> list[dict]:
     """
-    Scrape material prices from Tokopedia using Apify
+    Scrape material prices from Tokopedia using Apify.
 
+    Results are cached for 24 hours to reduce scraping costs.
     Uses retry logic for resilience against scraping failures.
 
     Args:
@@ -175,6 +176,16 @@ async def scrape_tokopedia_prices(
     Raises:
         Exception: If scraping fails after retries
     """
+    from app.utils.cache import price_scrape_cache
+
+    # Build cache key
+    cache_key = f"tokopedia:{material_name.lower()}:{max_results}"
+
+    # Try cache first (saves Apify costs - $0.005/scrape)
+    cached_result = await price_scrape_cache.get(cache_key)
+    if cached_result is not None:
+        return cached_result
+
     client = get_apify_client()
 
     # Configure scraping task for Tokopedia
@@ -212,6 +223,9 @@ async def scrape_tokopedia_prices(
                     "sold_count": sold_count,
                 }
             )
+
+        # Cache results for 24 hours
+        await price_scrape_cache.set(cache_key, results, ttl=86400)
 
         return results
 
