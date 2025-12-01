@@ -346,3 +346,50 @@ def mask_phone_number(phone: str) -> str:
         return f"{clean[:2]}████{clean[-2:]}"
 
     return f"{clean[:4]}████{clean[-4:]}"
+
+
+# Backward compatibility helper for old worker data format
+def create_trust_score_from_worker_dict(worker_data: dict) -> TrustScoreDetailed:
+    """
+    Create trust score from worker database record (backward compatibility).
+
+    This function handles both old and new worker data formats.
+
+    Args:
+        worker_data: Worker dictionary from database
+
+    Returns:
+        TrustScoreDetailed: Trust score with breakdown
+    """
+    # Determine source tier
+    source_str = worker_data.get("source_tier", "platform")
+    try:
+        source = SourceTier(source_str)
+    except ValueError:
+        source = SourceTier.PLATFORM
+
+    # Extract scoring components
+    review_count = worker_data.get("gmaps_review_count") or worker_data.get(
+        "platform_reviews", 0
+    )
+    rating = worker_data.get("gmaps_rating") or worker_data.get("platform_rating")
+    photos_count = worker_data.get("gmaps_photos_count", 0)
+    has_website = bool(worker_data.get("website"))
+    has_whatsapp = bool(worker_data.get("whatsapp"))
+    platform_jobs = worker_data.get("platform_jobs_completed", 0)
+
+    # Extract freshness data
+    last_active = worker_data.get("last_scraped_at")
+    listing_age_days = worker_data.get("olx_listing_age_days")
+
+    return calculate_trust_score(
+        source=source,
+        review_count=review_count,
+        rating=rating,
+        photos_count=photos_count,
+        has_website=has_website,
+        has_whatsapp=has_whatsapp,
+        platform_jobs=platform_jobs,
+        last_active=last_active,
+        listing_age_days=listing_age_days,
+    )
