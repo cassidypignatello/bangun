@@ -13,7 +13,7 @@ from slowapi.util import get_remote_address
 from app.config import get_settings
 from app.middleware.error_handler import add_error_handlers
 from app.middleware.timeout import TimeoutMiddleware
-from app.routes import estimates, health, materials, payments, workers
+from app.routes import estimates, health, materials, payments, workers, workers_search
 
 settings = get_settings()
 
@@ -61,7 +61,8 @@ add_error_handlers(app)
 # Include routers
 app.include_router(health.router, prefix="/health", tags=["Health"])
 app.include_router(estimates.router, prefix="/estimate", tags=["Estimates"])
-app.include_router(workers.router, prefix="/workers", tags=["Workers"])
+app.include_router(workers_search.router, tags=["Workers"])  # New search endpoint
+app.include_router(workers.router, prefix="/workers", tags=["Workers"])  # Legacy endpoints
 app.include_router(payments.router, prefix="", tags=["Payments"])
 app.include_router(materials.router, prefix="/materials", tags=["Materials"])
 
