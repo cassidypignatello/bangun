@@ -126,43 +126,11 @@ CREATE TABLE IF NOT EXISTS worker_unlocks (
 -- ============================================================================
 -- SCRAPE JOBS TABLE (ENHANCEMENT)
 -- ============================================================================
--- Extend existing scrape_jobs table to support worker scraping
-
--- Note: If scrape_jobs table already exists from Week 2, run this ALTER:
--- ALTER TABLE scrape_jobs ADD COLUMN IF NOT EXISTS job_type VARCHAR(50);
--- ALTER TABLE scrape_jobs ADD CONSTRAINT valid_job_type CHECK (job_type IN ('material_price', 'worker_discovery', 'general'));
-
--- If scrape_jobs doesn't exist yet, create it:
-CREATE TABLE IF NOT EXISTS scrape_jobs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-
-    -- Job Details
-    job_type VARCHAR(50) NOT NULL,  -- 'material_price', 'worker_discovery'
-    apify_actor_id VARCHAR(255) NOT NULL,  -- e.g., 'compass/crawler-google-places'
-    apify_run_id VARCHAR(255),  -- Apify's run ID for status tracking
-
-    -- Input/Output
-    input_params JSONB NOT NULL,  -- Stored scraper input configuration
-    output_data JSONB,  -- Scraped results (may be large)
-    results_count INTEGER DEFAULT 0,
-
-    -- Status
-    status VARCHAR(50) DEFAULT 'pending',  -- 'pending', 'running', 'completed', 'failed'
-    error_message TEXT,
-
-    -- Cost Tracking
-    estimated_cost_usd DECIMAL(10, 4),
-    actual_cost_usd DECIMAL(10, 4),
-
-    -- Timestamps
-    started_at TIMESTAMPTZ,
-    completed_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-
-    -- Constraints
-    CONSTRAINT valid_job_type CHECK (job_type IN ('material_price', 'worker_discovery', 'general')),
-    CONSTRAINT valid_status CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled'))
-);
+-- Note: scrape_jobs table already exists from Migration 001 with ENUM types
+-- The existing table already supports worker scraping with:
+--   - job_type: scrape_type ENUM ('materials', 'workers_olx', 'workers_gmaps')
+--   - status: scrape_status ENUM ('pending', 'running', 'completed', 'failed')
+-- No changes needed to scrape_jobs table for worker discovery feature
 
 -- ============================================================================
 -- INDEXES
@@ -192,10 +160,6 @@ CREATE INDEX IF NOT EXISTS idx_worker_reviews_date ON worker_reviews(review_date
 CREATE INDEX IF NOT EXISTS idx_worker_unlocks_worker_id ON worker_unlocks(worker_id);
 CREATE INDEX IF NOT EXISTS idx_worker_unlocks_user_email ON worker_unlocks(user_email);
 CREATE INDEX IF NOT EXISTS idx_worker_unlocks_unlocked_at ON worker_unlocks(unlocked_at DESC);
-
--- Scrape jobs indexes
-CREATE INDEX IF NOT EXISTS idx_scrape_jobs_type_status ON scrape_jobs(job_type, status);
-CREATE INDEX IF NOT EXISTS idx_scrape_jobs_created_at ON scrape_jobs(created_at DESC);
 
 -- ============================================================================
 -- FUNCTIONS
