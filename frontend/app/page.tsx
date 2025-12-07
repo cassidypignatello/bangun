@@ -2,6 +2,7 @@
 
 import { WorkerSearchForm } from '@/components/WorkerSearchForm';
 import { WorkerSearchResults } from '@/components/WorkerSearchResults';
+import { CostEstimateForm } from '@/components/CostEstimateForm';
 import { useWorkerSearch } from '@/lib/hooks';
 
 export default function Home() {
@@ -32,11 +33,11 @@ export default function Home() {
           <h2 className="text-2xl font-semibold mb-6 text-gray-900">
             Get Your Project Estimate
           </h2>
-          <p className="text-gray-600 mb-4">
+          <p className="text-gray-600 mb-6">
             Tell us about your renovation project and we&apos;ll provide accurate material costs
-            and connect you with trusted local workers.
+            and labor estimates based on current Bali market prices.
           </p>
-          {/* Estimate form will go here */}
+          <CostEstimateForm />
         </div>
       </div>
     </main>
