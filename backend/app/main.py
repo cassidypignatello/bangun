@@ -81,7 +81,7 @@ add_error_handlers(app)
 
 # Include routers
 app.include_router(health.router, prefix="/health", tags=["Health"])
-app.include_router(estimates.router, prefix="/estimate", tags=["Estimates"])
+app.include_router(estimates.router, prefix="/estimates", tags=["Estimates"])
 app.include_router(workers_search.router, tags=["Workers"])  # New search endpoint
 app.include_router(workers.router, prefix="/workers", tags=["Workers"])  # Legacy endpoints
 app.include_router(payments.router, prefix="", tags=["Payments"])
