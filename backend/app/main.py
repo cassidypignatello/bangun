@@ -5,7 +5,7 @@ Includes Sentry monitoring, CORS, rate limiting, error handling, and background 
 
 import sentry_sdk
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -79,13 +79,19 @@ app.add_middleware(TimeoutMiddleware, default_timeout=30)
 # Add custom error handlers
 add_error_handlers(app)
 
-# Include routers
-app.include_router(health.router, prefix="/health", tags=["Health"])
-app.include_router(estimates.router, prefix="/estimates", tags=["Estimates"])
-app.include_router(workers_search.router, tags=["Workers"])  # New search endpoint
-app.include_router(workers.router, prefix="/workers", tags=["Workers"])  # Legacy endpoints
-app.include_router(payments.router, prefix="", tags=["Payments"])
-app.include_router(materials.router, prefix="/materials", tags=["Materials"])
+# Create API v1 router
+api_v1_router = APIRouter(prefix="/api/v1")
+
+# Include all API routes under /api/v1
+api_v1_router.include_router(health.router, prefix="/health", tags=["Health"])
+api_v1_router.include_router(estimates.router, prefix="/estimates", tags=["Estimates"])
+api_v1_router.include_router(workers_search.router, tags=["Workers"])  # New search endpoint
+api_v1_router.include_router(workers.router, prefix="/workers", tags=["Workers"])  # Legacy endpoints
+api_v1_router.include_router(payments.router, prefix="", tags=["Payments"])
+api_v1_router.include_router(materials.router, prefix="/materials", tags=["Materials"])
+
+# Mount the API v1 router
+app.include_router(api_v1_router)
 
 
 @app.get("/")

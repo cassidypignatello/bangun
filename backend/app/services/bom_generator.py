@@ -22,29 +22,27 @@ async def create_estimate(project: ProjectInput) -> EstimateResponse:
     Returns:
         EstimateResponse: Initial estimate with pending status
     """
-    estimate_id = f"est_{uuid.uuid4().hex[:12]}"
+    project_id = str(uuid.uuid4())
     now = datetime.utcnow()
 
-    estimate_data = {
-        "estimate_id": estimate_id,
-        "status": EstimateStatus.PENDING.value,
+    # Map to database schema (projects table)
+    project_data = {
+        "id": project_id,
+        "status": "draft",  # project_status enum value
         "project_type": project.project_type.value,
         "description": project.description,
         "location": project.location,
-        "images": [str(img) for img in project.images],
-        "bom_items": [],
-        "total_cost_idr": 0,
-        "labor_cost_idr": 0,
-        "grand_total_idr": 0,
-        "created_at": now.isoformat(),
-        "updated_at": now.isoformat(),
+        "bom": [],  # JSONB column for BOM items
+        "material_total": 0,
+        "labor_total": 0,
+        "total_estimate": 0,
     }
 
     # Save to database
-    await save_project(estimate_data)
+    await save_project(project_data)
 
     return EstimateResponse(
-        estimate_id=estimate_id,
+        estimate_id=project_id,
         status=EstimateStatus.PENDING,
         project_type=project.project_type.value,
         bom_items=[],
@@ -61,22 +59,18 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
     Background task to generate BOM and calculate prices
 
     Args:
-        estimate_id: Estimate to process
+        estimate_id: Estimate to process (project ID)
         project: Project input data
 
     Raises:
         Exception: If processing fails
     """
     try:
-        # Update status to processing
-        await update_project_status(estimate_id, EstimateStatus.PROCESSING.value)
-
         # Step 1: Generate BOM using GPT-4o-mini
         project_dict = {
             "project_type": project.project_type.value,
             "description": project.description,
             "location": project.location,
-            "images": [str(img) for img in project.images],
         }
 
         raw_bom = await generate_bom(project_dict)
@@ -107,22 +101,21 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
         grand_total = total_cost + labor_cost
 
         # Step 5: Update database with completed estimate
+        # Map to database schema
         await update_project_status(
             estimate_id,
-            EstimateStatus.COMPLETED.value,
-            bom_items=[item.model_dump() for item in bom_items],
-            total_cost_idr=total_cost,
-            labor_cost_idr=labor_cost,
-            grand_total_idr=grand_total,
-            updated_at=datetime.utcnow().isoformat(),
+            "estimated",  # project_status enum value for completed estimates
+            bom=[item.model_dump() for item in bom_items],  # JSONB column
+            material_total=total_cost,
+            labor_total=labor_cost,
+            total_estimate=grand_total,
         )
 
     except Exception as e:
-        # Update with error status
+        # Store error in price_range JSONB field for now
         await update_project_status(
             estimate_id,
-            EstimateStatus.FAILED.value,
-            error_message=str(e),
-            updated_at=datetime.utcnow().isoformat(),
+            "draft",
+            price_range={"error": str(e), "status": "failed"},
         )
         raise
