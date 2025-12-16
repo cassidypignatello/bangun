@@ -12,9 +12,9 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
   const { estimate, loading, error, progress, createEstimate } = useEstimate();
   const [formData, setFormData] = useState<CreateEstimateRequest>({
     project_type: '',
-    area_sqm: undefined,
+    description: '',
     location: '',
-    specifications: {},
+    images: [],
   });
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -27,18 +27,10 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => {
     const { name, value } = e.target;
-
-    if (name === 'area_sqm') {
-      setFormData((prev) => ({
-        ...prev,
-        [name]: value === '' ? undefined : parseFloat(value),
-      }));
-    } else {
-      setFormData((prev) => ({
-        ...prev,
-        [name]: value,
-      }));
-    }
+    setFormData((prev) => ({
+      ...prev,
+      [name]: value,
+    }));
   };
 
   const formatPrice = (priceIdr: number) => {
@@ -56,32 +48,38 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
           <label htmlFor="project_type" className="block text-sm font-medium text-gray-700 mb-2">
             Project Type
           </label>
-          <input
-            type="text"
+          <select
             id="project_type"
             name="project_type"
             value={formData.project_type}
             onChange={handleChange}
-            placeholder="e.g., Villa Renovation, Bathroom Remodel"
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             required
-          />
+          >
+            <option value="">Select a project type...</option>
+            <option value="villa_construction">Villa Construction</option>
+            <option value="home_renovation">Home Renovation</option>
+            <option value="bathroom_renovation">Bathroom Renovation</option>
+            <option value="kitchen_renovation">Kitchen Renovation</option>
+            <option value="pool_construction">Pool Construction</option>
+            <option value="extension">Extension</option>
+          </select>
         </div>
 
         <div>
-          <label htmlFor="area_sqm" className="block text-sm font-medium text-gray-700 mb-2">
-            Area (square meters) - optional
+          <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
+            Project Description
           </label>
-          <input
-            type="number"
-            id="area_sqm"
-            name="area_sqm"
-            value={formData.area_sqm || ''}
+          <textarea
+            id="description"
+            name="description"
+            value={formData.description}
             onChange={handleChange}
-            min="1"
-            step="0.1"
-            placeholder="e.g., 100"
+            placeholder="Describe your project in detail (minimum 10 characters)..."
+            rows={4}
+            minLength={10}
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            required
           />
         </div>
 

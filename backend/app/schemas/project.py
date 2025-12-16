@@ -41,7 +41,7 @@ class ProjectInput(BaseModel):
         description="Detailed project description",
         examples=["Modern 3-bedroom villa with infinity pool, 200m2, minimalist design"],
     )
-    images: list[HttpUrl] = Field(
+    images: list[HttpUrl | str] = Field(
         default_factory=list,
         max_length=10,
         description="URLs of reference images or design plans",

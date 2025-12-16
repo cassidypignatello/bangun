@@ -31,8 +31,9 @@ export default function TestApiPage() {
     addResult("Testing cost estimate...");
     await createEstimate({
       project_type: "bathroom_renovation",
-      area_sqm: 10,
+      description: "Small bathroom renovation with new tiles, 10 square meters in Canggu",
       location: "Canggu",
+      images: [],
     });
   };
 

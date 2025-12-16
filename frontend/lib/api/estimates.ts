@@ -11,9 +11,9 @@ import type {
 
 export interface CreateEstimateRequest {
   project_type: string;
-  area_sqm?: number;
+  description: string;
   location?: string;
-  specifications?: Record<string, unknown>;
+  images?: string[];
 }
 
 export const estimatesApi = {
