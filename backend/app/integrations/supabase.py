@@ -234,6 +234,348 @@ async def update_material_prices(
 
 
 # ============================================
+# MATERIAL PRICE CACHE LAYER
+# ============================================
+
+CACHE_TTL_DAYS = 7  # Materials price cache validity period
+
+
+async def get_cached_material_price(material_name: str) -> dict | None:
+    """
+    Look up cached price from materials table using name or alias matching.
+
+    This is Tier 2 of the three-tier caching strategy:
+    - Tier 1: In-memory TTLCache (60s) - checked first in apify.py
+    - Tier 2: Supabase materials table (7 days) - this function
+    - Tier 3: Live Apify scrape - fallback when cache misses
+
+    Args:
+        material_name: Material to search for (Indonesian or English name)
+
+    Returns:
+        dict | None: Cached price data if found and fresh, None otherwise
+            {
+                "material_id": "uuid",
+                "name_id": "Semen Tiga Roda 40kg",
+                "price_min": 75000,
+                "price_max": 95000,
+                "price_avg": 85000,
+                "price_median": 84000,
+                "price_sample_size": 5,
+                "price_updated_at": "2025-12-20T10:00:00Z",
+                "is_fresh": True
+            }
+    """
+    from datetime import datetime, timedelta, timezone
+
+    supabase = get_supabase_client()
+    normalized_query = material_name.lower().strip()
+
+    # Try exact match on name fields first (fastest)
+    response = (
+        supabase.table("materials")
+        .select("*")
+        .or_(f"name_id.ilike.{normalized_query},name_en.ilike.{normalized_query}")
+        .limit(1)
+        .execute()
+    )
+
+    material = response.data[0] if response.data else None
+
+    # If no exact match, try alias search
+    if not material:
+        # Use PostgreSQL array containment for alias lookup
+        # Note: This requires the query to exactly match an alias
+        response = (
+            supabase.table("materials")
+            .select("*")
+            .contains("aliases", [normalized_query])
+            .limit(1)
+            .execute()
+        )
+        material = response.data[0] if response.data else None
+
+    # If still no match, try fuzzy search on names
+    if not material:
+        response = (
+            supabase.table("materials")
+            .select("*")
+            .or_(f"name_id.ilike.%{normalized_query}%,name_en.ilike.%{normalized_query}%")
+            .limit(1)
+            .execute()
+        )
+        material = response.data[0] if response.data else None
+
+    if not material:
+        return None
+
+    # Check if price data exists and is fresh
+    price_updated_at = material.get("price_updated_at")
+    if not price_updated_at or not material.get("price_avg"):
+        return None  # No cached price data
+
+    # Parse timestamp and check freshness
+    try:
+        if isinstance(price_updated_at, str):
+            # Handle ISO format with or without timezone
+            updated_at = datetime.fromisoformat(price_updated_at.replace("Z", "+00:00"))
+        else:
+            updated_at = price_updated_at
+
+        # Make timezone-aware if needed
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+
+        cache_expiry = datetime.now(timezone.utc) - timedelta(days=CACHE_TTL_DAYS)
+        is_fresh = updated_at > cache_expiry
+
+    except (ValueError, TypeError):
+        is_fresh = False
+
+    return {
+        "material_id": material.get("id"),
+        "name_id": material.get("name_id"),
+        "name_en": material.get("name_en"),
+        "price_min": material.get("price_min"),
+        "price_max": material.get("price_max"),
+        "price_avg": material.get("price_avg"),
+        "price_median": material.get("price_median"),
+        "price_sample_size": material.get("price_sample_size", 0),
+        "price_updated_at": price_updated_at,
+        "is_fresh": is_fresh,
+        "tokopedia_search": material.get("tokopedia_search"),
+        "unit": material.get("unit"),
+    }
+
+
+async def save_material_price_cache(
+    material_name: str,
+    prices: list[dict],
+    tokopedia_search: str | None = None,
+) -> str | None:
+    """
+    Save scraped prices to materials table as cache.
+
+    If material exists, updates price fields.
+    If material doesn't exist, creates a new entry.
+
+    Args:
+        material_name: Material name (used for lookup or creation)
+        prices: List of scraped product prices from Tokopedia
+            [{"price_idr": 85000, "name": "...", "rating": 4.8, ...}, ...]
+        tokopedia_search: Optional search query used for scraping
+
+    Returns:
+        str | None: Material ID if saved successfully, None otherwise
+    """
+    if not prices:
+        return None
+
+    # Calculate price statistics
+    # Handle None values safely by converting to 0 first
+    valid_prices = [
+        p.get("price_idr", 0) or 0
+        for p in prices
+        if (p.get("price_idr", 0) or 0) > 0
+    ]
+    if not valid_prices:
+        return None
+
+    import statistics
+
+    valid_prices.sort()
+    sample_size = len(valid_prices)
+    price_min = valid_prices[0]
+    price_max = valid_prices[-1]
+    price_avg = sum(valid_prices) / sample_size
+    # Use statistics.median for correct handling of even-length samples
+    # This uses true division (not integer division) for proper precision
+    price_median = statistics.median(valid_prices)
+
+    supabase = get_supabase_client()
+
+    # Normalize material name for consistent storage and lookup
+    # Strip whitespace, normalize to title case for display
+    normalized_name = " ".join(material_name.strip().split())  # Collapse whitespace
+    display_name = normalized_name.title()  # "semen portland" -> "Semen Portland"
+    lookup_key = normalized_name.lower()  # For case-insensitive matching
+
+    # Try to find existing material (case-insensitive)
+    # Use ilike with exact match pattern (no wildcards = exact case-insensitive)
+    response = (
+        supabase.table("materials")
+        .select("id")
+        .or_(f"name_id.ilike.{lookup_key},name_en.ilike.{lookup_key}")
+        .limit(1)
+        .execute()
+    )
+
+    if response.data:
+        # Update existing material
+        material_id = response.data[0]["id"]
+        supabase.table("materials").update({
+            "price_min": price_min,
+            "price_max": price_max,
+            "price_avg": price_avg,
+            "price_median": price_median,
+            "price_sample_size": sample_size,
+            "price_updated_at": "now()",
+        }).eq("id", material_id).execute()
+        return material_id
+
+    # Also check aliases array (catches "semen tiga roda" -> "Semen Portland")
+    alias_response = (
+        supabase.table("materials")
+        .select("id")
+        .contains("aliases", [lookup_key])
+        .limit(1)
+        .execute()
+    )
+
+    if alias_response.data:
+        material_id = alias_response.data[0]["id"]
+        supabase.table("materials").update({
+            "price_min": price_min,
+            "price_max": price_max,
+            "price_avg": price_avg,
+            "price_median": price_median,
+            "price_sample_size": sample_size,
+            "price_updated_at": "now()",
+        }).eq("id", material_id).execute()
+        return material_id
+
+    # Create new material entry (dynamic cache entry)
+    # Generate a material code for new entries
+    import uuid
+    material_code = f"DYN-{uuid.uuid4().hex[:8].upper()}"
+
+    # Infer unit from material name if possible
+    unit = _infer_unit_from_name(normalized_name)
+
+    new_material = {
+        "material_code": material_code,
+        "name_id": display_name,  # Normalized title case
+        "name_en": display_name,  # Same as ID for dynamic entries
+        "category": "dynamic",  # Mark as dynamically cached
+        "unit": unit,
+        "tokopedia_search": tokopedia_search or normalized_name,
+        "aliases": [lookup_key],  # Store lowercase for matching
+        "price_min": price_min,
+        "price_max": price_max,
+        "price_avg": price_avg,
+        "price_median": price_median,
+        "price_sample_size": sample_size,
+        "price_updated_at": "now()",
+    }
+
+    response = supabase.table("materials").insert(new_material).execute()
+    return response.data[0]["id"] if response.data else None
+
+
+def _infer_unit_from_name(material_name: str) -> str:
+    """
+    Infer appropriate unit from material name patterns.
+
+    Args:
+        material_name: Normalized material name
+
+    Returns:
+        str: Inferred unit (e.g., "kg", "m²", "buah") or "pcs" as default
+    """
+    name_lower = material_name.lower()
+
+    # Weight-based materials
+    if any(w in name_lower for w in ["kg", "kilogram", "gram"]):
+        return "kg"
+    if any(w in name_lower for w in ["sak", "zak", "bag"]):
+        return "sak"
+
+    # Length/area-based materials
+    if "m²" in name_lower or "m2" in name_lower or "meter persegi" in name_lower:
+        return "m²"
+    if "m³" in name_lower or "m3" in name_lower or "kubik" in name_lower:
+        return "m³"
+    if any(w in name_lower for w in ["meter", "4m", "6m"]):
+        return "meter"
+
+    # Sheet/board materials
+    if any(w in name_lower for w in ["lembar", "sheet", "plywood", "gypsum", "triplek"]):
+        return "lembar"
+
+    # Rod/bar materials
+    if any(w in name_lower for w in ["batang", "besi", "pipa", "hollow"]):
+        return "batang"
+
+    # Liquid/volume materials
+    if any(w in name_lower for w in ["liter", "galon"]):
+        return "liter"
+
+    # Individual items (tiles, bricks, fittings)
+    if any(w in name_lower for w in ["bata", "keramik", "genteng", "kran", "saklar"]):
+        return "buah"
+
+    # Default to pieces
+    return "pcs"
+
+
+async def get_material_by_alias(alias: str) -> dict | None:
+    """
+    Look up material by alias using PostgreSQL array containment.
+
+    Args:
+        alias: Alias to search for (case-insensitive)
+
+    Returns:
+        dict | None: Material data if found
+    """
+    supabase = get_supabase_client()
+    normalized_alias = alias.lower().strip()
+
+    response = (
+        supabase.table("materials")
+        .select("*")
+        .contains("aliases", [normalized_alias])
+        .limit(1)
+        .execute()
+    )
+
+    return response.data[0] if response.data else None
+
+
+async def get_stale_materials(max_age_days: int = 7, limit: int = 50) -> list[dict]:
+    """
+    Get materials with stale or missing price data for cache refresh.
+
+    Used by the weekly cache refresh job to identify materials
+    that need price updates.
+
+    Args:
+        max_age_days: Consider prices older than this stale
+        limit: Maximum number of materials to return
+
+    Returns:
+        list[dict]: Materials needing price refresh
+    """
+    from datetime import datetime, timedelta, timezone
+
+    supabase = get_supabase_client()
+    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+
+    # Get materials with stale or missing prices
+    # Priority: materials with no price_updated_at, then oldest first
+    response = (
+        supabase.table("materials")
+        .select("id, material_code, name_id, name_en, tokopedia_search, price_updated_at")
+        .or_(f"price_updated_at.is.null,price_updated_at.lt.{cutoff_date}")
+        .order("price_updated_at", desc=False, nullsfirst=True)
+        .limit(limit)
+        .execute()
+    )
+
+    return response.data if response.data else []
+
+
+# ============================================
 # WORKERS
 # ============================================
 

@@ -146,6 +146,7 @@ def _extract_price(item: dict) -> int:
     Extract price from various Tokopedia actor output formats.
 
     Supports:
+    - fatihtahta format: item.price (string like "Rp85.000" or int)
     - 123webdata format: item.priceInt or item.price (int)
     - jupri format: item.price.number (nested dict)
     - Direct number formats
@@ -156,6 +157,8 @@ def _extract_price(item: dict) -> int:
     Returns:
         int: Price in IDR, or 0 if not found
     """
+    import re
+
     # Try priceInt field (123webdata)
     if "priceInt" in item and item["priceInt"]:
         return int(item["priceInt"])
@@ -165,11 +168,32 @@ def _extract_price(item: dict) -> int:
         price = item["price"]
         if isinstance(price, dict):  # jupri format: {number: 150000}
             return int(price.get("number", 0))
-        elif isinstance(price, (int, float, str)):  # direct number or string
-            try:
-                return int(float(price))
-            except (ValueError, TypeError):
-                pass
+        elif isinstance(price, int):  # Direct int
+            return price
+        elif isinstance(price, float):  # Direct float
+            return int(price)
+        elif isinstance(price, str):
+            # fatihtahta format: "Rp85.000" or "85000" or "85,000"
+            # Remove currency prefix and formatting
+            cleaned = re.sub(r"[^\d]", "", price)
+            if cleaned:
+                try:
+                    return int(cleaned)
+                except (ValueError, TypeError):
+                    pass
+
+    # Try priceOriginal field (some actors)
+    if "priceOriginal" in item:
+        price = item["priceOriginal"]
+        if isinstance(price, (int, float)):
+            return int(price)
+        elif isinstance(price, str):
+            cleaned = re.sub(r"[^\d]", "", price)
+            if cleaned:
+                try:
+                    return int(cleaned)
+                except (ValueError, TypeError):
+                    pass
 
     return 0
 
@@ -178,20 +202,50 @@ def _extract_rating(item: dict) -> float:
     """
     Extract rating from various formats.
 
+    Supports:
+    - fatihtahta format: item.rating (float or string)
+    - 123webdata format: item.rating (float)
+    - jupri format: item.rating (nested or direct)
+
     Args:
         item: Product data from Apify actor
 
     Returns:
         float: Rating (0.0-5.0), or 0.0 if not found
     """
-    rating = item.get("rating", 0)
-    if isinstance(rating, (int, float)):
-        return float(rating)
-    elif isinstance(rating, str):
-        try:
+    # Try direct rating field (only if key exists and has truthy value)
+    rating = item.get("rating")
+    if rating is not None:
+        if isinstance(rating, (int, float)) and rating > 0:
             return float(rating)
-        except ValueError:
-            return 0.0
+        elif isinstance(rating, str):
+            try:
+                parsed = float(rating)
+                if parsed > 0:
+                    return parsed
+            except ValueError:
+                pass
+
+    # Try ratingAverage field (some actors use this instead)
+    rating_avg = item.get("ratingAverage") or item.get("rating_average")
+    if rating_avg is not None:
+        if isinstance(rating_avg, (int, float)) and rating_avg > 0:
+            return float(rating_avg)
+        elif isinstance(rating_avg, str):
+            try:
+                parsed = float(rating_avg)
+                if parsed > 0:
+                    return parsed
+            except ValueError:
+                pass
+
+    # Try nested stats.rating (some actors)
+    stats = item.get("stats")
+    if isinstance(stats, dict):
+        stat_rating = stats.get("rating")
+        if isinstance(stat_rating, (int, float)) and stat_rating > 0:
+            return float(stat_rating)
+
     return 0.0
 
 
@@ -199,18 +253,71 @@ def _extract_sold_count(item: dict) -> int:
     """
     Extract sold count from various formats.
 
+    Supports:
+    - fatihtahta format: item.sold (string like "500+ terjual" or int)
+    - 123webdata format: item.sold (int)
+    - jupri format: item.stock.sold (nested)
+
     Args:
         item: Product data from Apify actor
 
     Returns:
         int: Number of units sold, or 0 if not found
     """
-    # Try direct sold field (123webdata)
+    import re
+
+    # Try direct sold field
     if "sold" in item and item["sold"]:
-        try:
-            return int(item["sold"])
-        except (ValueError, TypeError):
-            pass
+        sold = item["sold"]
+        if isinstance(sold, int):
+            return sold
+        elif isinstance(sold, str):
+            # fatihtahta format: "500+ terjual" or "1rb+ terjual"
+            # Extract numbers, handle "rb" (ribu = thousand)
+            if "rb" in sold.lower():
+                # Handle Indonesian "rb" (ribu = thousand) format
+                # Indonesian uses . as thousands separator, , as decimal
+                # Examples: "1.500rb" = 1,500,000, "2rb" = 2,000, "1,5rb" = 1,500
+                match = re.search(r"([\d.,]+)\s*rb", sold.lower())
+                if match:
+                    try:
+                        num_str = match.group(1).strip()
+                        # Normalize Indonesian number format to Python float
+                        has_dot = "." in num_str
+                        has_comma = "," in num_str
+                        if has_dot and not has_comma:
+                            # Dots are thousands separators: "1.500" -> "1500"
+                            num_str = num_str.replace(".", "")
+                        elif has_comma and not has_dot:
+                            # Comma is decimal separator: "1,5" -> "1.5"
+                            num_str = num_str.replace(",", ".")
+                        elif has_dot and has_comma:
+                            # Both present: "1.234,56" -> "1234.56"
+                            num_str = num_str.replace(".", "").replace(",", ".")
+                        num = float(num_str)
+                        return int(num * 1000)
+                    except (ValueError, TypeError):
+                        pass
+            # Regular number extraction
+            cleaned = re.sub(r"[^\d]", "", sold)
+            if cleaned:
+                try:
+                    return int(cleaned)
+                except (ValueError, TypeError):
+                    pass
+
+    # Try soldCount field (some actors)
+    if "soldCount" in item:
+        sold_count = item["soldCount"]
+        if isinstance(sold_count, int):
+            return sold_count
+        elif isinstance(sold_count, str):
+            cleaned = re.sub(r"[^\d]", "", sold_count)
+            if cleaned:
+                try:
+                    return int(cleaned)
+                except (ValueError, TypeError):
+                    pass
 
     # Try nested stock.sold field (jupri)
     if "stock" in item:
@@ -220,6 +327,13 @@ def _extract_sold_count(item: dict) -> int:
                 return int(stock_data["sold"])
             except (ValueError, TypeError):
                 pass
+
+    # Try stats.sold (some actors)
+    stats = item.get("stats", {})
+    if isinstance(stats, dict):
+        stat_sold = stats.get("sold", 0)
+        if isinstance(stat_sold, (int, float)):
+            return int(stat_sold)
 
     return 0
 
@@ -258,59 +372,121 @@ async def scrape_tokopedia_prices(
     material_name: str, max_results: int = 5
 ) -> list[dict]:
     """
-    Scrape material prices from Tokopedia using Apify.
+    Scrape material prices from Tokopedia using three-tier caching strategy.
 
-    Results are cached for 24 hours to reduce scraping costs.
-    Uses retry logic for resilience against scraping failures.
+    Caching tiers:
+    1. In-memory TTLCache (60s) - instant, free
+    2. Supabase materials table (7 days) - fast DB lookup, free
+    3. Live Apify scrape - slow, costs $0.0015/result
+
+    Uses fatihtahta/tokopedia-scraper actor ($1.50/1k results) for cost efficiency.
 
     Args:
         material_name: Material to search for
-        max_results: Maximum number of results to return
+        max_results: Maximum number of results to return from live scrape (Tier 3 only)
 
     Returns:
         list[dict]: Product listings with prices
-            [
-                {
-                    "name": "Product name",
-                    "price_idr": 150000,
-                    "url": "https://tokopedia.com/...",
-                    "seller": "Seller name",
-                    "rating": 4.8,
-                    "sold_count": 150
+
+        IMPORTANT: Return shape differs by cache tier:
+
+        - Tier 1 (in-memory): Returns whatever was previously cached
+        - Tier 2 (Supabase): Returns SINGLE aggregated item with price statistics
+            [{
+                "name": "Material name",
+                "price_idr": 150000,  # Average price
+                "url": "",
+                "seller": "Cached Price",
+                "rating": 0.0,
+                "sold_count": 0,
+                "_cached": True,
+                "_price_range": {
+                    "min": 100000,
+                    "max": 200000,
+                    "median": 145000
                 }
-            ]
+            }]
+
+        - Tier 3 (live scrape): Returns up to max_results individual products
+            [{
+                "name": "Product name",
+                "price_idr": 150000,
+                "url": "https://tokopedia.com/...",
+                "seller": "Seller name",
+                "rating": 4.8,
+                "sold_count": 150
+            }, ...]
 
     Raises:
         Exception: If scraping fails after retries
     """
     from app.utils.cache import price_scrape_cache
+    from app.integrations.supabase import (
+        get_cached_material_price,
+        save_material_price_cache,
+    )
 
-    # Build cache key
+    # Build cache key for in-memory cache
     cache_key = f"tokopedia:{material_name.lower()}:{max_results}"
 
-    # Try cache first (saves Apify costs - $0.005/scrape)
+    # =========================================================================
+    # TIER 1: In-memory TTLCache (60s TTL, instant, FREE)
+    # =========================================================================
     cached_result = await price_scrape_cache.get(cache_key)
     if cached_result is not None:
         return cached_result
 
+    # =========================================================================
+    # TIER 2: Supabase materials table (7-day TTL, ~50ms, FREE)
+    # =========================================================================
+    try:
+        db_cache = await get_cached_material_price(material_name)
+        if db_cache and db_cache.get("is_fresh") and db_cache.get("price_avg"):
+            # NOTE: Cached response returns SINGLE aggregated item with price statistics
+            # This differs from Tier 3 (live scrape) which returns up to max_results items
+            # The aggregated item contains avg/min/max/median from previous scrape results
+            cached_products = [
+                {
+                    "name": db_cache.get("name_id", material_name),
+                    "price_idr": int(db_cache.get("price_avg", 0)),  # Average price
+                    "url": "",  # Not stored in cache
+                    "seller": "Cached Price",
+                    "rating": 0.0,
+                    "sold_count": 0,
+                    "_cached": True,  # Flag indicating this is cached data
+                    "_price_range": {  # Additional statistics not available in live results
+                        "min": db_cache.get("price_min"),
+                        "max": db_cache.get("price_max"),
+                        "median": db_cache.get("price_median"),
+                    },
+                }
+            ]
+            # Warm up in-memory cache (60s TTL as documented)
+            # This preserves the single aggregated item for subsequent requests
+            await price_scrape_cache.set(cache_key, cached_products, ttl=60)
+            return cached_products
+    except Exception:
+        # Supabase lookup failed, continue to live scrape
+        pass
+
+    # =========================================================================
+    # TIER 3: Live Apify scrape (10-30s, $0.0015/result)
+    # =========================================================================
     client = get_apify_client()
 
-    # Build Tokopedia search URL - 123webdata actor requires URLs, not queries
+    # Build Tokopedia search URL
     search_url = _build_tokopedia_search_url(material_name)
 
-    # Configure scraping task for Tokopedia
-    # Note: 123webdata/tokopedia-scraper requires categoryUrls or productUrls
-    # We provide a search results URL which it can scrape
+    # Configure scraping task for fatihtahta/tokopedia-scraper
+    # This actor uses startUrls instead of categoryUrls
     run_input = {
-        "categoryUrls": [search_url],
-        "maxResultsPerScrape": max_results,
-        "usePagination": False,  # Don't paginate for cost optimization
+        "startUrls": [search_url],
     }
 
     try:
-        # Run Tokopedia scraper actor (pay-per-result: $0.005/result)
-        # Changed from jupri/tokopedia-scraper ($30/month rental) for cost optimization
-        run = client.actor("123webdata/tokopedia-scraper").call(run_input=run_input)
+        # Run Tokopedia scraper actor (pay-per-result: $1.50/1k = $0.0015/result)
+        # Switched from 123webdata ($5/1k) for 70% cost reduction
+        run = client.actor("fatihtahta/tokopedia-scraper").call(run_input=run_input)
 
         # Fetch results from dataset
         results = []
@@ -324,19 +500,48 @@ async def scrape_tokopedia_prices(
             # Extract sold count - supports multiple formats
             sold_count = _extract_sold_count(item)
 
+            # Extract seller name - handle both dict and string formats
+            # Some actors return {"shop": {"name": "..."}} others return {"shop": "..."} or {"seller": "..."}
+            shop = item.get("shop")
+            if isinstance(shop, dict):
+                seller = shop.get("name", "")
+            elif isinstance(shop, str):
+                seller = shop
+            else:
+                seller = item.get("seller", "")
+
             results.append(
                 {
-                    "name": item.get("name", ""),
+                    "name": item.get("name", item.get("title", "")),
                     "price_idr": price_idr,
-                    "url": item.get("url", ""),
-                    "seller": item.get("shop", {}).get("name", ""),
+                    "url": item.get("url", item.get("link", "")),
+                    "seller": seller,
                     "rating": rating,
                     "sold_count": sold_count,
                 }
             )
 
-        # Cache results for 24 hours
-        await price_scrape_cache.set(cache_key, results, ttl=86400)
+            # Limit results (actor may return more)
+            if len(results) >= max_results:
+                break
+
+        # =====================================================================
+        # Update BOTH cache tiers with fresh results
+        # =====================================================================
+
+        # Tier 1: In-memory cache (60s TTL as documented)
+        await price_scrape_cache.set(cache_key, results, ttl=60)
+
+        # Tier 2: Supabase cache (persistent, 7-day freshness)
+        try:
+            await save_material_price_cache(
+                material_name=material_name,
+                prices=results,
+                tokopedia_search=search_url,
+            )
+        except Exception:
+            # Supabase save failed, but we have results - continue
+            pass
 
         return results
 
