@@ -751,3 +751,139 @@ class TestAggregateSellerStats:
 
         assert result["rating_avg"] is None
         assert result["rating_sample_size"] == 0
+
+
+class TestBestSellerScoring:
+    """Tests for Best Seller scoring algorithm with Bali location bonus"""
+
+    def test_is_bali_location(self):
+        """Should correctly identify Bali region locations"""
+        from app.integrations.apify import _is_bali_location
+
+        # Bali locations should return True
+        assert _is_bali_location("Denpasar") is True
+        assert _is_bali_location("Badung") is True
+        assert _is_bali_location("Bali") is True
+        assert _is_bali_location("Kota Denpasar, Bali") is True
+        assert _is_bali_location("Gianyar") is True
+
+        # Non-Bali locations should return False
+        assert _is_bali_location("Jakarta") is False
+        assert _is_bali_location("Surabaya") is False
+        assert _is_bali_location("Bandung") is False
+        assert _is_bali_location("") is False
+        assert _is_bali_location(None) is False
+
+    def test_score_best_seller_price_weight(self):
+        """Should weight price at 0.4 with lower = better"""
+        from app.integrations.apify import score_best_seller
+
+        # Lowest price product
+        low_price = {"price_idr": 80000, "rating": 0, "sold_count": 0, "seller_location": ""}
+        # Highest price product
+        high_price = {"price_idr": 120000, "rating": 0, "sold_count": 0, "seller_location": ""}
+
+        low_score = score_best_seller(low_price, min_price=80000, max_price=120000)
+        high_score = score_best_seller(high_price, min_price=80000, max_price=120000)
+
+        # Low price should have higher price_score
+        assert low_score.price_score == 1.0  # Lowest price = 1.0
+        assert high_score.price_score == 0.0  # Highest price = 0.0
+        # Price contributes 0.4 weight
+        assert low_score.total_score > high_score.total_score
+
+    def test_score_best_seller_rating_weight(self):
+        """Should weight rating at 0.3"""
+        from app.integrations.apify import score_best_seller
+
+        # High rating product
+        high_rating = {"price_idr": 100000, "rating": 5.0, "sold_count": 0, "seller_location": ""}
+        # Low rating product
+        low_rating = {"price_idr": 100000, "rating": 1.0, "sold_count": 0, "seller_location": ""}
+
+        high_score = score_best_seller(high_rating, min_price=100000, max_price=100000)
+        low_score = score_best_seller(low_rating, min_price=100000, max_price=100000)
+
+        assert high_score.rating_score == 1.0
+        assert low_score.rating_score == 0.2  # 1/5 = 0.2
+        assert high_score.total_score > low_score.total_score
+
+    def test_score_best_seller_sales_weight(self):
+        """Should weight sales at 0.2 with logarithmic scale"""
+        from app.integrations.apify import score_best_seller
+
+        # High sales product
+        high_sales = {"price_idr": 100000, "rating": 0, "sold_count": 10000, "seller_location": ""}
+        # Low sales product
+        low_sales = {"price_idr": 100000, "rating": 0, "sold_count": 10, "seller_location": ""}
+        # No sales product
+        no_sales = {"price_idr": 100000, "rating": 0, "sold_count": 0, "seller_location": ""}
+
+        high_score = score_best_seller(high_sales, min_price=100000, max_price=100000)
+        low_score = score_best_seller(low_sales, min_price=100000, max_price=100000)
+        no_score = score_best_seller(no_sales, min_price=100000, max_price=100000)
+
+        assert high_score.sales_score == 1.0  # 10k+ = max
+        assert 0 < low_score.sales_score < 0.5  # 10 sales = low but not zero
+        assert no_score.sales_score == 0.0
+
+    def test_score_best_seller_bali_bonus(self):
+        """Should give 10% bonus to Bali sellers via location weight"""
+        from app.integrations.apify import score_best_seller
+
+        # Bali seller
+        bali_seller = {"price_idr": 100000, "rating": 4.0, "sold_count": 100, "seller_location": "Denpasar"}
+        # Non-Bali seller (same stats)
+        jakarta_seller = {"price_idr": 100000, "rating": 4.0, "sold_count": 100, "seller_location": "Jakarta"}
+
+        bali_score = score_best_seller(bali_seller, min_price=100000, max_price=100000)
+        jakarta_score = score_best_seller(jakarta_seller, min_price=100000, max_price=100000)
+
+        # Bali gets full location score (1.0), Jakarta gets half (0.5)
+        assert bali_score.location_score == 1.0
+        assert jakarta_score.location_score == 0.5
+        assert bali_score.is_bali_seller is True
+        assert jakarta_score.is_bali_seller is False
+
+        # Bali seller should have higher total score
+        # Location weight is 0.1, so difference is 0.05 (0.1 * 0.5)
+        score_diff = bali_score.total_score - jakarta_score.total_score
+        assert abs(score_diff - 0.05) < 0.001
+
+    def test_rank_best_sellers(self):
+        """Should rank products and return top N"""
+        from app.integrations.apify import rank_best_sellers
+
+        products = [
+            {"price_idr": 120000, "rating": 3.0, "sold_count": 50, "seller_location": "Jakarta"},
+            {"price_idr": 80000, "rating": 4.5, "sold_count": 500, "seller_location": "Denpasar"},  # Should win
+            {"price_idr": 100000, "rating": 4.0, "sold_count": 100, "seller_location": "Surabaya"},
+        ]
+
+        ranked = rank_best_sellers(products, top_n=2)
+
+        assert len(ranked) == 2
+        # Denpasar seller should be #1 (low price, high rating, Bali bonus)
+        assert ranked[0].product["seller_location"] == "Denpasar"
+        assert ranked[0].is_bali_seller is True
+        # Scores should be descending
+        assert ranked[0].total_score > ranked[1].total_score
+
+    def test_rank_best_sellers_empty(self):
+        """Should handle empty product list"""
+        from app.integrations.apify import rank_best_sellers
+
+        ranked = rank_best_sellers([])
+        assert ranked == []
+
+    def test_rank_best_sellers_no_valid_prices(self):
+        """Should handle products with no valid prices"""
+        from app.integrations.apify import rank_best_sellers
+
+        products = [
+            {"price_idr": 0, "rating": 4.0, "sold_count": 100, "seller_location": "Jakarta"},
+            {"price_idr": None, "rating": 4.0, "sold_count": 100, "seller_location": "Bali"},
+        ]
+
+        ranked = rank_best_sellers(products, top_n=5)
+        assert ranked == []
