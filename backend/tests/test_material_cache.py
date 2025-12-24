@@ -547,3 +547,207 @@ class TestScrapeTokopediaPricesIntegration:
                         # Verify both caches were updated
                         mock_cache.set.assert_called_once()
                         mock_save.assert_called_once()
+
+
+class TestMapTokopediaProduct:
+    """Tests for map_tokopedia_product mapper function"""
+
+    def test_maps_complete_product(self):
+        """Should map all fields from complete fatihtahta actor output"""
+        from app.integrations.apify import map_tokopedia_product
+
+        raw_item = {
+            "name": "Semen Tiga Roda 40kg",
+            "price": "Rp85.000",
+            "rating": 4.8,
+            "sold": "500+ terjual",
+            "url": "https://tokopedia.com/product/123",
+            "shop": {
+                "name": "Toko Bangunan Jaya",
+                "location": "Jakarta Selatan",
+                "badge": "Power Merchant",
+            },
+        }
+
+        result = map_tokopedia_product(raw_item)
+
+        assert result.name == "Semen Tiga Roda 40kg"
+        assert result.price_idr == 85000
+        assert result.rating == 4.8
+        assert result.sold_count == 500
+        assert result.seller_name == "Toko Bangunan Jaya"
+        assert result.seller_location == "Jakarta Selatan"
+        assert result.seller_tier == "power_merchant"
+        assert result.url == "https://tokopedia.com/product/123"
+
+    def test_maps_official_store(self):
+        """Should correctly identify official store seller tier"""
+        from app.integrations.apify import map_tokopedia_product
+
+        raw_item = {
+            "title": "Cat Dulux Weathershield",
+            "price": 250000,
+            "rating": 4.9,
+            "sold": 1000,
+            "link": "https://tokopedia.com/dulux/123",
+            "shop": {
+                "name": "Dulux Official",
+                "location": "Jakarta",
+                "isOfficial": True,
+            },
+        }
+
+        result = map_tokopedia_product(raw_item)
+
+        assert result.name == "Cat Dulux Weathershield"
+        assert result.seller_tier == "official_store"
+
+    def test_maps_string_shop(self):
+        """Should handle shop as string instead of dict"""
+        from app.integrations.apify import map_tokopedia_product
+
+        raw_item = {
+            "name": "Keramik 60x60",
+            "price": 75000,
+            "shop": "Toko Keramik",
+            "location": "Surabaya",
+        }
+
+        result = map_tokopedia_product(raw_item)
+
+        assert result.seller_name == "Toko Keramik"
+        assert result.seller_location == "Surabaya"
+        assert result.seller_tier == "regular"
+
+    def test_maps_minimal_product(self):
+        """Should handle product with missing fields"""
+        from app.integrations.apify import map_tokopedia_product
+
+        raw_item = {"name": "Unknown Product"}
+
+        result = map_tokopedia_product(raw_item)
+
+        assert result.name == "Unknown Product"
+        assert result.price_idr == 0
+        assert result.rating == 0.0
+        assert result.sold_count == 0
+        assert result.seller_name == ""
+        assert result.seller_location == ""
+        assert result.seller_tier == "regular"
+        assert result.url == ""
+
+
+class TestAggregateSellerStats:
+    """Tests for aggregate_seller_stats function"""
+
+    def test_aggregates_multiple_products(self):
+        """Should correctly aggregate stats from multiple products"""
+        from app.integrations.apify import TokopediaProduct, aggregate_seller_stats
+
+        products = [
+            TokopediaProduct(
+                name="Product A",
+                price_idr=80000,
+                rating=4.5,
+                sold_count=100,
+                seller_name="Toko A",
+                seller_location="Jakarta",
+                seller_tier="regular",
+                url="",
+            ),
+            TokopediaProduct(
+                name="Product B",
+                price_idr=85000,
+                rating=4.8,
+                sold_count=200,
+                seller_name="Toko B",
+                seller_location="Jakarta",
+                seller_tier="power_merchant",
+                url="",
+            ),
+            TokopediaProduct(
+                name="Product C",
+                price_idr=90000,
+                rating=4.2,
+                sold_count=50,
+                seller_name="Toko C",
+                seller_location="Bandung",
+                seller_tier="official_store",
+                url="",
+            ),
+        ]
+
+        result = aggregate_seller_stats(products)
+
+        # Average of 4.5, 4.8, 4.2 = 4.5
+        assert result["rating_avg"] == 4.5
+        assert result["rating_sample_size"] == 3
+        # Sum of 100 + 200 + 50 = 350
+        assert result["count_sold_total"] == 350
+        # Jakarta appears twice, most common
+        assert result["seller_location"] == "Jakarta"
+        # official_store is highest tier
+        assert result["seller_tier"] == "official_store"
+
+    def test_handles_zero_ratings(self):
+        """Should exclude zero ratings from average"""
+        from app.integrations.apify import TokopediaProduct, aggregate_seller_stats
+
+        products = [
+            TokopediaProduct(
+                name="Product A",
+                price_idr=80000,
+                rating=4.5,
+                sold_count=100,
+                seller_name="Toko A",
+                seller_location="Jakarta",
+                seller_tier="regular",
+                url="",
+            ),
+            TokopediaProduct(
+                name="Product B",
+                price_idr=85000,
+                rating=0.0,  # No rating
+                sold_count=200,
+                seller_name="Toko B",
+                seller_location="Jakarta",
+                seller_tier="power_merchant",
+                url="",
+            ),
+        ]
+
+        result = aggregate_seller_stats(products)
+
+        # Only Product A has rating
+        assert result["rating_avg"] == 4.5
+        assert result["rating_sample_size"] == 1
+
+    def test_handles_empty_list(self):
+        """Should return empty dict for empty product list"""
+        from app.integrations.apify import aggregate_seller_stats
+
+        result = aggregate_seller_stats([])
+
+        assert result == {}
+
+    def test_handles_no_rated_products(self):
+        """Should return None rating_avg when no products have ratings"""
+        from app.integrations.apify import TokopediaProduct, aggregate_seller_stats
+
+        products = [
+            TokopediaProduct(
+                name="Product A",
+                price_idr=80000,
+                rating=0.0,
+                sold_count=100,
+                seller_name="Toko A",
+                seller_location="Jakarta",
+                seller_tier="regular",
+                url="",
+            ),
+        ]
+
+        result = aggregate_seller_stats(products)
+
+        assert result["rating_avg"] is None
+        assert result["rating_sample_size"] == 0

@@ -356,13 +356,13 @@ async def save_material_price_cache(
     """
     Save scraped prices to materials table as cache.
 
-    If material exists, updates price fields.
+    If material exists, updates price fields and seller stats.
     If material doesn't exist, creates a new entry.
 
     Args:
         material_name: Material name (used for lookup or creation)
         prices: List of scraped product prices from Tokopedia
-            [{"price_idr": 85000, "name": "...", "rating": 4.8, ...}, ...]
+            [{"price_idr": 85000, "name": "...", "rating": 4.8, "sold_count": 100, ...}, ...]
         tokopedia_search: Optional search query used for scraping
 
     Returns:
@@ -392,6 +392,13 @@ async def save_material_price_cache(
     # This uses true division (not integer division) for proper precision
     price_median = statistics.median(valid_prices)
 
+    # Calculate seller statistics from scraped data
+    # Import the mapper from apify module
+    from app.integrations.apify import map_tokopedia_product, aggregate_seller_stats
+
+    mapped_products = [map_tokopedia_product(p) for p in prices]
+    seller_stats = aggregate_seller_stats(mapped_products)
+
     supabase = get_supabase_client()
 
     # Normalize material name for consistent storage and lookup
@@ -399,6 +406,22 @@ async def save_material_price_cache(
     normalized_name = " ".join(material_name.strip().split())  # Collapse whitespace
     display_name = normalized_name.title()  # "semen portland" -> "Semen Portland"
     lookup_key = normalized_name.lower()  # For case-insensitive matching
+
+    # Build update payload with price and seller stats
+    update_payload = {
+        "price_min": price_min,
+        "price_max": price_max,
+        "price_avg": price_avg,
+        "price_median": price_median,
+        "price_sample_size": sample_size,
+        "price_updated_at": "now()",
+        # New seller quality fields
+        "rating_avg": seller_stats.get("rating_avg"),
+        "rating_sample_size": seller_stats.get("rating_sample_size", 0),
+        "count_sold_total": seller_stats.get("count_sold_total", 0),
+        "seller_location": seller_stats.get("seller_location"),
+        "seller_tier": seller_stats.get("seller_tier"),
+    }
 
     # Try to find existing material (case-insensitive)
     # Use ilike with exact match pattern (no wildcards = exact case-insensitive)
@@ -413,14 +436,7 @@ async def save_material_price_cache(
     if response.data:
         # Update existing material
         material_id = response.data[0]["id"]
-        supabase.table("materials").update({
-            "price_min": price_min,
-            "price_max": price_max,
-            "price_avg": price_avg,
-            "price_median": price_median,
-            "price_sample_size": sample_size,
-            "price_updated_at": "now()",
-        }).eq("id", material_id).execute()
+        supabase.table("materials").update(update_payload).eq("id", material_id).execute()
         return material_id
 
     # Also check aliases array (catches "semen tiga roda" -> "Semen Portland")
@@ -434,14 +450,7 @@ async def save_material_price_cache(
 
     if alias_response.data:
         material_id = alias_response.data[0]["id"]
-        supabase.table("materials").update({
-            "price_min": price_min,
-            "price_max": price_max,
-            "price_avg": price_avg,
-            "price_median": price_median,
-            "price_sample_size": sample_size,
-            "price_updated_at": "now()",
-        }).eq("id", material_id).execute()
+        supabase.table("materials").update(update_payload).eq("id", material_id).execute()
         return material_id
 
     # Create new material entry (dynamic cache entry)
@@ -460,12 +469,7 @@ async def save_material_price_cache(
         "unit": unit,
         "tokopedia_search": tokopedia_search or normalized_name,
         "aliases": [lookup_key],  # Store lowercase for matching
-        "price_min": price_min,
-        "price_max": price_max,
-        "price_avg": price_avg,
-        "price_median": price_median,
-        "price_sample_size": sample_size,
-        "price_updated_at": "now()",
+        **update_payload,  # Include all price and seller stats
     }
 
     response = supabase.table("materials").insert(new_material).execute()

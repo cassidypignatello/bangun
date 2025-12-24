@@ -141,6 +141,11 @@ def get_apify_client() -> ApifyClient:
     return ApifyClient(settings.apify_token)
 
 
+# =============================================================================
+# Price/Rating/Sold Extraction Helpers
+# =============================================================================
+
+
 def _extract_price(item: dict) -> int:
     """
     Extract price from various Tokopedia actor output formats.
@@ -360,6 +365,159 @@ def _build_tokopedia_search_url(material_name: str) -> str:
     # Construct Tokopedia search URL
     # Format: https://www.tokopedia.com/search?q=<search_term>
     return f"https://www.tokopedia.com/search?q={encoded_term}"
+
+
+# =============================================================================
+# Tokopedia Scraper Output Mapper
+# =============================================================================
+
+
+@dataclass
+class TokopediaProduct:
+    """
+    Normalized product data from Tokopedia scrapers.
+
+    Maps output from fatihtahta/tokopedia-scraper (and compatible actors)
+    to our internal Material model fields.
+    """
+
+    name: str
+    price_idr: int
+    rating: float
+    sold_count: int
+    seller_name: str
+    seller_location: str
+    seller_tier: str  # official_store, power_merchant, regular
+    url: str
+
+
+def map_tokopedia_product(raw_item: dict) -> TokopediaProduct:
+    """
+    Map fatihtahta/tokopedia-scraper output to internal TokopediaProduct.
+
+    The fatihtahta actor returns items with these fields:
+    - title/name: Product title
+    - price: Price string like "Rp85.000" or int
+    - rating: Float rating (0.0-5.0)
+    - sold: String like "500+ terjual" or "1rb+ terjual"
+    - shop: Dict with name, location, badge info or string
+    - url/link: Product URL
+
+    Args:
+        raw_item: Raw product dict from Apify actor
+
+    Returns:
+        TokopediaProduct: Normalized product data
+    """
+    # Extract basic fields using existing helpers
+    price_idr = _extract_price(raw_item)
+    rating = _extract_rating(raw_item)
+    sold_count = _extract_sold_count(raw_item)
+
+    # Extract product name
+    name = raw_item.get("name") or raw_item.get("title") or ""
+
+    # Extract URL
+    url = raw_item.get("url") or raw_item.get("link") or ""
+
+    # Extract seller info - handle both dict and string formats
+    shop = raw_item.get("shop")
+    seller_name = ""
+    seller_location = ""
+    seller_tier = "regular"
+
+    if isinstance(shop, dict):
+        seller_name = shop.get("name", "")
+        seller_location = shop.get("location", shop.get("city", ""))
+
+        # Determine seller tier from badge/official status
+        # fatihtahta format uses badge field or isOfficial/isPowerMerchant
+        badge = shop.get("badge", "").lower()
+        is_official = shop.get("isOfficial", shop.get("is_official", False))
+        is_power = shop.get("isPowerMerchant", shop.get("is_power_merchant", False))
+
+        if is_official or "official" in badge:
+            seller_tier = "official_store"
+        elif is_power or "power" in badge or "pm" in badge:
+            seller_tier = "power_merchant"
+    elif isinstance(shop, str):
+        seller_name = shop
+    else:
+        # Fallback to seller field
+        seller_name = raw_item.get("seller", "")
+
+    # Try alternate location fields if not found in shop
+    if not seller_location:
+        seller_location = raw_item.get("location") or raw_item.get("city") or ""
+
+    return TokopediaProduct(
+        name=name,
+        price_idr=price_idr,
+        rating=rating,
+        sold_count=sold_count,
+        seller_name=seller_name,
+        seller_location=seller_location,
+        seller_tier=seller_tier,
+        url=url,
+    )
+
+
+def aggregate_seller_stats(products: list[TokopediaProduct]) -> dict:
+    """
+    Aggregate seller statistics from a list of mapped products.
+
+    Calculates:
+    - rating_avg: Average rating across products with ratings
+    - rating_sample_size: Number of products with ratings
+    - count_sold_total: Sum of all sold counts
+    - seller_location: Most common seller location
+    - seller_tier: Highest tier among sellers (official > power > regular)
+
+    Args:
+        products: List of TokopediaProduct instances
+
+    Returns:
+        dict: Aggregated stats ready for materials table update
+    """
+    if not products:
+        return {}
+
+    # Calculate average rating (exclude 0 ratings)
+    ratings = [p.rating for p in products if p.rating > 0]
+    rating_avg = sum(ratings) / len(ratings) if ratings else None
+    rating_sample_size = len(ratings)
+
+    # Sum total sold count
+    count_sold_total = sum(p.sold_count for p in products)
+
+    # Find most common location
+    locations = [p.seller_location for p in products if p.seller_location]
+    seller_location = None
+    if locations:
+        from collections import Counter
+
+        location_counts = Counter(locations)
+        seller_location = location_counts.most_common(1)[0][0]
+
+    # Determine best seller tier (official > power > regular)
+    tier_priority = {"official_store": 3, "power_merchant": 2, "regular": 1}
+    tiers = [p.seller_tier for p in products if p.seller_tier]
+    seller_tier = None
+    if tiers:
+        seller_tier = max(tiers, key=lambda t: tier_priority.get(t, 0))
+
+    return {
+        "rating_avg": round(rating_avg, 2) if rating_avg else None,
+        "rating_sample_size": rating_sample_size,
+        "count_sold_total": count_sold_total,
+        "seller_location": seller_location,
+        "seller_tier": seller_tier,
+    }
+
+
+# =============================================================================
+# Tokopedia Scraping Functions
+# =============================================================================
 
 
 @with_circuit_breaker("apify")
