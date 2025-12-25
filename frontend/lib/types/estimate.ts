@@ -11,7 +11,10 @@ export enum EstimateStatus {
 }
 
 export interface BOMItem {
+  /** Indonesian material name for Tokopedia search (e.g., 'Semen 50kg') */
   material_name: string;
+  /** English material name for user display (e.g., 'Cement 50kg Bag') */
+  english_name: string | null;
   quantity: number;
   unit: string;
   unit_price_idr: number;
@@ -19,6 +22,7 @@ export interface BOMItem {
   source: string;
   confidence: number;
   marketplace_url: string | null;
+  affiliate_url: string | null;
 }
 
 export interface EstimateResponse {
