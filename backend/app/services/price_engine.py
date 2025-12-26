@@ -118,21 +118,44 @@ async def enrich_single_material(material: dict) -> dict:
     }
 
 
-async def enrich_bom_with_prices(bom_items: list[dict]) -> list[dict]:
+async def enrich_bom_with_prices(
+    bom_items: list[dict],
+    on_progress: callable = None,
+) -> list[dict]:
     """
     Enrich entire BOM with pricing data
 
     Args:
         bom_items: List of materials from BOM generation
+        on_progress: Optional callback(current, total, material_name, source) for progress updates
 
     Returns:
         list[dict]: Enriched materials with prices
     """
     enriched = []
+    total = len(bom_items)
 
-    for item in bom_items:
+    for i, item in enumerate(bom_items):
+        # Report progress before processing each item
+        if on_progress:
+            await on_progress(
+                current=i,
+                total=total,
+                material_name=item.get("english_name") or item.get("material_name", ""),
+                source="searching",
+            )
+
         enriched_item = await enrich_single_material(item)
         enriched.append(enriched_item)
+
+        # Report completion of this item with its source
+        if on_progress:
+            await on_progress(
+                current=i + 1,
+                total=total,
+                material_name=item.get("english_name") or item.get("material_name", ""),
+                source=enriched_item.get("source", "unknown"),
+            )
 
     return enriched
 

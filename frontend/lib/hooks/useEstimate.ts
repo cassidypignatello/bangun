@@ -11,6 +11,7 @@ interface UseEstimateResult {
   loading: boolean;
   error: string | null;
   progress: number;
+  progressMessage: string | null;
   createEstimate: (request: CreateEstimateRequest) => Promise<void>;
   pollStatus: (estimateId: string) => Promise<void>;
   reset: () => void;
@@ -24,12 +25,14 @@ export function useEstimate(): UseEstimateResult {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
+  const [progressMessage, setProgressMessage] = useState<string | null>(null);
   const [pollAttempts, setPollAttempts] = useState(0);
 
   const createEstimate = async (request: CreateEstimateRequest) => {
     setLoading(true);
     setError(null);
     setProgress(0);
+    setProgressMessage(null);
 
     const response = await estimatesApi.create(request);
 
@@ -68,6 +71,7 @@ export function useEstimate(): UseEstimateResult {
 
     if (response.data) {
       setProgress(response.data.progress_percentage);
+      setProgressMessage(response.data.message);
 
       if (response.data.status === "completed" || response.data.status === "failed") {
         // Fetch full details
@@ -89,8 +93,9 @@ export function useEstimate(): UseEstimateResult {
     setError(null);
     setLoading(false);
     setProgress(0);
+    setProgressMessage(null);
     setPollAttempts(0);
   };
 
-  return { estimate, loading, error, progress, createEstimate, pollStatus, reset };
+  return { estimate, loading, error, progress, progressMessage, createEstimate, pollStatus, reset };
 }

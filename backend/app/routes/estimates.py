@@ -85,14 +85,34 @@ async def get_estimate_status(request: Request, estimate_id: str):
             progress = price_range.get("progress", 0)
             step = price_range.get("step", "")
 
-            # Provide user-friendly step messages
-            step_messages = {
-                "generating_bom": "Generating Bill of Materials...",
-                "fetching_prices": f"Fetching prices for {price_range.get('bom_count', 0)} materials...",
-                "calculating_totals": "Calculating totals...",
-                "completed": "Estimate complete!",
-            }
-            step_message = step_messages.get(step)
+            # Provide user-friendly step messages with granular progress during price fetching
+            if step == "fetching_prices":
+                bom_count = price_range.get("bom_count", 0)
+                current_item = price_range.get("current_item", 0)
+                current_material = price_range.get("current_material", "")
+                current_source = price_range.get("current_source", "")
+
+                # Show which material is being processed
+                if current_material:
+                    source_labels = {
+                        "searching": "🔍 Searching",
+                        "tokopedia": "✓ Found on Tokopedia",
+                        "cached": "⚡ Cached",
+                        "estimated": "📊 Estimated",
+                    }
+                    source_label = source_labels.get(current_source, "")
+                    step_message = f"Fetching prices ({current_item}/{bom_count}): {current_material}"
+                    if source_label and current_source != "searching":
+                        step_message = f"{source_label}: {current_material} ({current_item}/{bom_count})"
+                else:
+                    step_message = f"Fetching prices for {bom_count} materials..."
+            else:
+                step_messages = {
+                    "generating_bom": "Generating Bill of Materials...",
+                    "calculating_totals": "Calculating totals...",
+                    "completed": "Estimate complete!",
+                }
+                step_message = step_messages.get(step)
         elif price_range.get("step") == "completed":
             estimate_status = "completed"
             progress = 100

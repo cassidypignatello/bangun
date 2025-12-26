@@ -10,7 +10,7 @@ interface CostEstimateFormProps {
 }
 
 export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) {
-  const { estimate, loading, error, progress, createEstimate } = useEstimate();
+  const { estimate, loading, error, progress, progressMessage, createEstimate } = useEstimate();
   const [formData, setFormData] = useState<CreateEstimateRequest>({
     project_type: '',
     description: '',
@@ -118,12 +118,15 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
               <span className="text-blue-800 font-medium">Processing estimate...</span>
               <span className="text-blue-600">{progress}%</span>
             </div>
-            <div className="w-full bg-blue-200 rounded-full h-2">
+            <div className="w-full bg-blue-200 rounded-full h-2.5 mb-2">
               <div
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
+                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300"
                 style={{ width: `${progress}%` }}
               />
             </div>
+            {progressMessage && (
+              <p className="text-sm text-blue-700 truncate">{progressMessage}</p>
+            )}
           </div>
         )}
 

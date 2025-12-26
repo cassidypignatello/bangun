@@ -88,18 +88,44 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
         raw_bom = await generate_bom(project_dict)
 
         # Update progress after BOM generation
+        bom_count = len(raw_bom)
         await update_project_status(
             estimate_id,
             "draft",
-            price_range={"step": "fetching_prices", "progress": 30, "bom_count": len(raw_bom), "status": "processing"},
+            price_range={
+                "step": "fetching_prices",
+                "progress": 30,
+                "bom_count": bom_count,
+                "status": "processing",
+                "current_item": 0,
+                "current_material": "",
+            },
         )
 
         # Step 2: Enrich with real-time prices (or mock data in dev mode)
+        # Progress callback to update UI during slow Apify scraping
+        async def on_price_progress(current: int, total: int, material_name: str, source: str):
+            # Map 0..total to 30..80 progress range
+            item_progress = 30 + int((current / total) * 50) if total > 0 else 30
+            await update_project_status(
+                estimate_id,
+                "draft",
+                price_range={
+                    "step": "fetching_prices",
+                    "progress": item_progress,
+                    "bom_count": total,
+                    "status": "processing",
+                    "current_item": current,
+                    "current_material": material_name[:50],  # Truncate for display
+                    "current_source": source,  # cached, tokopedia, estimated, searching
+                },
+            )
+
         if settings.debug and settings.use_mock_prices:
             # Use mock prices in development to avoid Apify costs
             enriched_bom = await _mock_enrich_bom(raw_bom)
         else:
-            enriched_bom = await enrich_bom_with_prices(raw_bom)
+            enriched_bom = await enrich_bom_with_prices(raw_bom, on_progress=on_price_progress)
 
         # Update progress after price enrichment
         await update_project_status(
