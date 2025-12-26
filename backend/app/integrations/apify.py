@@ -30,63 +30,64 @@ class ProductScore:
     price_score: float  # Relative to median (penalize outliers)
 
 
-# Bali region locations for shipping cost optimization
-BALI_LOCATIONS = frozenset([
-    "bali", "denpasar", "badung", "gianyar", "tabanan", "buleleng",
-    "jembrana", "karangasem", "klungkung", "bangli",
-])
-
-
 @dataclass
 class BestSellerScore:
     """
-    Best Seller score breakdown optimized for Bali-based projects.
+    Best Seller score breakdown using weighted ranking algorithm.
 
-    Formula: Score = (Price * 0.4) + (Rating * 0.3) + (Log(Sales) * 0.2) + (Location * 0.1)
-    Sellers in Bali region get 10% bonus for lower shipping costs.
+    Formula: Score = (Rating * 0.4) + (Sales * 0.4) + (Price * 0.2)
+
+    Weights:
+    - Rating: 40% - Seller trustworthiness and product quality
+    - Sales: 40% - Market validation and popularity
+    - Price: 20% - Lower price gets higher score
     """
 
     product: dict
     total_score: float
-    price_score: float      # Lower price = higher score (0.4 weight)
-    rating_score: float     # Higher rating = higher score (0.3 weight)
-    sales_score: float      # Log scale sales volume (0.2 weight)
-    location_score: float   # Bali bonus applied (0.1 weight)
-    is_bali_seller: bool    # Whether seller is in Bali region
-
-
-def _is_bali_location(location: str) -> bool:
-    """Check if seller location is in Bali region."""
-    if not location:
-        return False
-    location_lower = location.lower().strip()
-    return any(bali_loc in location_lower for bali_loc in BALI_LOCATIONS)
+    rating_score: float     # Higher rating = higher score (0.4 weight)
+    sales_score: float      # Higher sales = higher score (0.4 weight)
+    price_score: float      # Lower price = higher score (0.2 weight)
 
 
 def score_best_seller(product: dict, min_price: int, max_price: int) -> BestSellerScore:
     """
-    Score a product using Best Seller algorithm optimized for Bali projects.
+    Score a product using weighted ranking algorithm.
 
-    Formula: Score = (NormalizedPrice * 0.4) + (Rating * 0.3) + (Log(Sales) * 0.2) + (Location * 0.1)
+    Formula: Score = (Rating * 0.4) + (Sales * 0.4) + (Price * 0.2)
 
     Scoring weights:
-    - Price: 0.4 (lower price = higher score, normalized to min/max range)
-    - Rating: 0.3 (higher rating = higher score, 0-5 scale)
-    - Sales: 0.2 (logarithmic scale, market validation)
-    - Location: 0.1 (Bali sellers get 10% bonus for shipping)
+    - Rating: 0.4 (higher rating = higher score, 0-5 scale normalized)
+    - Sales: 0.4 (higher sales = higher score, normalized to min/max range)
+    - Price: 0.2 (lower price = higher score, normalized to min/max range)
 
     Args:
-        product: Product dict with price_idr, rating, sold_count, seller_location
+        product: Product dict with price_idr, rating, sold_count
         min_price: Minimum price in result set (for normalization)
         max_price: Maximum price in result set (for normalization)
 
     Returns:
         BestSellerScore with component breakdown
     """
+    # Rating score: 0-5 scale normalized to 0-1
+    rating = product.get("rating", 0) or product.get("rating_average", 0) or 0
+    rating_score = min(float(rating) / 5.0, 1.0) if rating > 0 else 0.0
+
+    # Sales score: normalized to min/max range within result set
+    sold = product.get("sold_count", 0) or product.get("count_sold", 0) or 0
+    # Get min/max sales from products for normalization (calculated in rank_best_sellers)
+    # For now, use logarithmic scale capped at 10k as fallback
     import math
+    if sold <= 0:
+        sales_score = 0.0
+    elif sold >= 10000:
+        sales_score = 1.0
+    else:
+        # log10 scale: 10 sales ≈ 0.25, 100 ≈ 0.5, 1000 ≈ 0.75, 10000 = 1.0
+        sales_score = math.log10(sold + 1) / 4.0
 
     # Price score: lower price = higher score (inverted normalization)
-    price = product.get("price_idr", 0)
+    price = product.get("price_idr", 0) or 0
     if max_price > min_price and price > 0:
         # Normalize to 0-1 where lowest price = 1.0
         price_score = 1.0 - ((price - min_price) / (max_price - min_price))
@@ -95,48 +96,60 @@ def score_best_seller(product: dict, min_price: int, max_price: int) -> BestSell
     else:
         price_score = 0.0
 
-    # Rating score: 0-5 scale normalized to 0-1
-    rating = product.get("rating", 0)
-    rating_score = min(rating / 5.0, 1.0) if rating > 0 else 0.0
-
-    # Sales score: logarithmic scale (log10), capped at 10k
-    sold = product.get("sold_count", 0)
-    if sold <= 0:
-        sales_score = 0.0
-    elif sold >= 10000:
-        sales_score = 1.0
-    else:
-        # log10(10001) ≈ 4, so divide by 4 to normalize
-        sales_score = math.log10(sold + 1) / 4.0
-
-    # Location score: Bali sellers get bonus
-    location = product.get("seller_location", "") or product.get("location", "")
-    is_bali = _is_bali_location(location)
-    # Base location score is 0.5, Bali sellers get 1.0 (10% total bonus)
-    location_score = 1.0 if is_bali else 0.5
-
-    # Weighted total with specified formula
+    # Weighted total: Rating 40% + Sales 40% + Price 20%
     total = (
-        (price_score * 0.4) +
-        (rating_score * 0.3) +
-        (sales_score * 0.2) +
-        (location_score * 0.1)
+        (rating_score * 0.4) +
+        (sales_score * 0.4) +
+        (price_score * 0.2)
     )
 
     return BestSellerScore(
         product=product,
         total_score=total,
-        price_score=price_score,
         rating_score=rating_score,
         sales_score=sales_score,
-        location_score=location_score,
-        is_bali_seller=is_bali,
+        price_score=price_score,
     )
+
+
+def _is_product_available(product: dict) -> bool:
+    """
+    Check if product is available for purchase.
+
+    Filters out products that are:
+    - Out of stock (stock = 0)
+    - Not active status
+
+    Args:
+        product: Product dict from Tokopedia scrape
+
+    Returns:
+        bool: True if product is available, False otherwise
+    """
+    # Check stock - handle various field names
+    stock = product.get("stock", product.get("stockCount", product.get("stock_count")))
+    if stock is not None:
+        try:
+            if int(stock) <= 0:
+                return False
+        except (ValueError, TypeError):
+            pass
+
+    # Check status - must be 'active' if status field exists
+    status = product.get("status", "").lower() if product.get("status") else ""
+    if status and status != "active":
+        return False
+
+    return True
 
 
 def rank_best_sellers(products: list[dict], top_n: int = 5) -> list[BestSellerScore]:
     """
-    Rank products using Best Seller algorithm and return top N.
+    Rank products using weighted ranking algorithm and return top N.
+
+    Filters out:
+    - Products with stock = 0
+    - Products with status != 'active'
 
     Args:
         products: List of product dicts from Tokopedia scrape
@@ -148,10 +161,16 @@ def rank_best_sellers(products: list[dict], top_n: int = 5) -> list[BestSellerSc
     if not products:
         return []
 
+    # Filter out unavailable products (out of stock or inactive)
+    available_products = [p for p in products if _is_product_available(p)]
+
+    if not available_products:
+        return []
+
     # Calculate price range for normalization (handle None values)
     valid_prices = [
         p.get("price_idr", 0) or 0
-        for p in products
+        for p in available_products
         if (p.get("price_idr", 0) or 0) > 0
     ]
     if not valid_prices:
@@ -162,7 +181,7 @@ def rank_best_sellers(products: list[dict], top_n: int = 5) -> list[BestSellerSc
 
     # Score only products with valid prices
     products_with_price = [
-        p for p in products
+        p for p in available_products
         if (p.get("price_idr", 0) or 0) > 0
     ]
     scored = [score_best_seller(p, min_price, max_price) for p in products_with_price]
@@ -774,13 +793,14 @@ async def scrape_tokopedia_prices(
     # =========================================================================
     client = get_apify_client()
 
-    # Build Tokopedia search URL
-    search_url = _build_tokopedia_search_url(material_name)
-
     # Configure scraping task for fatihtahta/tokopedia-scraper
-    # This actor uses startUrls instead of categoryUrls
+    # Use queries parameter (native search) instead of startUrls for efficiency
+    # Strict limit: 10 results to control costs ($0.0015/result)
     run_input = {
-        "startUrls": [search_url],
+        "queries": [material_name.strip()],
+        "limit": 10,
+        "includeDetails": False,  # Disable deep scrape for cost control
+        "includeReviews": False,  # Disable review scraping for cost control
     }
 
     try:
@@ -860,12 +880,11 @@ async def get_best_material_price(
     This function implements a smart material retrieval flow:
     1. Check Supabase cache (7-day freshness)
     2. If stale/missing, trigger live Tokopedia scrape
-    3. Apply Best Seller scoring with Bali location bonus
+    3. Apply weighted ranking algorithm
     4. Cache top 5 results and return #1 winner
 
-    Best Seller Formula:
-        Score = (Price * 0.4) + (Rating * 0.3) + (Log(Sales) * 0.2) + (Location * 0.1)
-        Bali sellers get 10% location bonus (Denpasar, Badung, etc.)
+    Weighted Ranking Formula:
+        Score = (Rating * 0.4) + (Sales * 0.4) + (Price * 0.2)
 
     Args:
         material_name: Material to search for
@@ -879,18 +898,16 @@ async def get_best_material_price(
                 "price_idr": 85000,
                 "url": "https://tokopedia.com/...",
                 "seller": "Seller name",
-                "seller_location": "Denpasar",
+                "seller_location": "Jakarta",
                 "rating": 4.8,
                 "sold_count": 500,
                 "best_seller_score": 0.85,
-                "is_bali_seller": True,
                 "_cached": False,
                 "_ranking": 1,
                 "_score_breakdown": {
-                    "price": 0.35,
-                    "rating": 0.29,
-                    "sales": 0.15,
-                    "location": 0.10
+                    "rating": 0.38,
+                    "sales": 0.32,
+                    "price": 0.15
                 }
             }
     """
@@ -923,7 +940,6 @@ async def get_best_material_price(
                 "rating": db_cache.get("rating_avg", 0) or 0,
                 "sold_count": db_cache.get("count_sold_total", 0) or 0,
                 "best_seller_score": 0.0,  # Not scored, from cache
-                "is_bali_seller": _is_bali_location(db_cache.get("seller_location", "")),
                 "_cached": True,
                 "_ranking": 1,
                 "_price_range": {
@@ -956,28 +972,26 @@ async def get_best_material_price(
             "rating": 0,
             "sold_count": 0,
             "best_seller_score": 0,
-            "is_bali_seller": False,
             "_cached": False,
             "_ranking": 0,
             "_error": "No results found",
         }
 
-    # Add seller_location from mapped products for scoring
+    # Add seller_location from mapped products for display
     for result in raw_results:
         if "seller_location" not in result:
             # Extract location from shop dict if available
             mapped = map_tokopedia_product(result)
             result["seller_location"] = mapped.seller_location
 
-    # Apply Best Seller scoring
+    # Apply weighted ranking (filters out-of-stock/inactive items)
     ranked = rank_best_sellers(raw_results, top_n=top_n)
 
     if not ranked:
-        # Fallback to first result if scoring failed
+        # Fallback to first result if scoring failed (all filtered out)
         return {
             **raw_results[0],
             "best_seller_score": 0,
-            "is_bali_seller": False,
             "_cached": False,
             "_ranking": 1,
         }
@@ -987,21 +1001,18 @@ async def get_best_material_price(
     best_result = {
         **winner.product,
         "best_seller_score": round(winner.total_score, 4),
-        "is_bali_seller": winner.is_bali_seller,
         "_cached": False,
         "_ranking": 1,
         "_score_breakdown": {
-            "price": round(winner.price_score * 0.4, 4),
-            "rating": round(winner.rating_score * 0.3, 4),
-            "sales": round(winner.sales_score * 0.2, 4),
-            "location": round(winner.location_score * 0.1, 4),
+            "rating": round(winner.rating_score * 0.4, 4),
+            "sales": round(winner.sales_score * 0.4, 4),
+            "price": round(winner.price_score * 0.2, 4),
         },
         "_top_5": [
             {
                 "name": s.product.get("name", ""),
                 "price_idr": s.product.get("price_idr", 0),
                 "score": round(s.total_score, 4),
-                "is_bali": s.is_bali_seller,
             }
             for s in ranked
         ],
