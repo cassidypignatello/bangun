@@ -5,7 +5,8 @@ Two-tier semantic matching for materials: exact match + fuzzy matching
 from difflib import SequenceMatcher
 
 from app.integrations.openai_client import enhance_material_description
-from app.integrations.supabase import search_materials
+from app.integrations.supabase import get_supabase_client, search_materials
+from app.utils.text import normalize_material_name
 
 
 def calculate_similarity(str1: str, str2: str) -> float:
@@ -31,12 +32,45 @@ async def find_exact_match(material_name: str) -> dict | None:
     """
     Attempt exact match from historical data
 
+    Uses two strategies:
+    1. Normalized name exact match (fast, uses index)
+    2. Fuzzy ilike search with similarity check (fallback)
+
     Args:
         material_name: Material to match
 
     Returns:
         dict | None: Cached price data if found
     """
+    # Strategy 1: Fast exact match using normalized_name (indexed column)
+    # This handles variations in spacing, word order, and units
+    normalized = normalize_material_name(material_name)
+    if normalized:
+        try:
+            supabase = get_supabase_client()
+            response = (
+                supabase.table("materials")
+                .select("*")
+                .eq("normalized_name", normalized)
+                .limit(1)
+                .execute()
+            )
+            if response.data and len(response.data) > 0:
+                entry = response.data[0]
+                # Verify price data exists
+                price_avg = entry.get("price_avg", 0) or 0
+                if price_avg > 0:
+                    return {
+                        "material_name": get_material_display_name(entry),
+                        "unit_price_idr": int(price_avg),  # Convert Decimal/float to int for Pydantic
+                        "source": "cached",  # Clear indicator of cache hit
+                        "confidence": 1.0,  # Exact normalized match = perfect confidence
+                        "marketplace_url": entry.get("tokopedia_search"),
+                    }
+        except Exception:
+            pass  # Fall through to fuzzy search
+
+    # Strategy 2: Fuzzy ilike search with similarity check
     history = await search_materials(material_name, limit=5)
 
     if not history:
@@ -55,7 +89,7 @@ async def find_exact_match(material_name: str) -> dict | None:
         if similarity > 0.95:
             return {
                 "material_name": get_material_display_name(entry),
-                "unit_price_idr": entry.get("price_avg", 0),
+                "unit_price_idr": int(entry.get("price_avg", 0) or 0),  # Convert to int for Pydantic
                 "source": "historical",
                 "confidence": similarity,
                 "marketplace_url": entry.get("tokopedia_search"),  # Use search term as fallback
@@ -64,13 +98,16 @@ async def find_exact_match(material_name: str) -> dict | None:
     return None
 
 
-async def find_fuzzy_match(material_name: str, threshold: float = 0.75) -> dict | None:
+async def find_fuzzy_match(material_name: str, threshold: float = 0.90) -> dict | None:
     """
     Fuzzy matching with historical data
 
+    Secondary fallback after normalized_name exact match fails.
+    Higher threshold (0.90) reduces false positives while catching minor variations.
+
     Args:
         material_name: Material to match
-        threshold: Minimum similarity threshold
+        threshold: Minimum similarity threshold (default 0.90 for high precision)
 
     Returns:
         dict | None: Best fuzzy match if above threshold
@@ -96,7 +133,7 @@ async def find_fuzzy_match(material_name: str, threshold: float = 0.75) -> dict 
             best_score = similarity
             best_match = {
                 "material_name": get_material_display_name(entry),
-                "unit_price_idr": entry.get("price_avg", 0),
+                "unit_price_idr": int(entry.get("price_avg", 0) or 0),  # Convert to int for Pydantic
                 "source": "historical_fuzzy",
                 "confidence": similarity,
                 "marketplace_url": entry.get("tokopedia_search"),
