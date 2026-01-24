@@ -268,39 +268,56 @@ async def get_cached_material_price(material_name: str) -> dict | None:
     """
     from datetime import datetime, timedelta, timezone
 
+    from app.utils.text import normalize_material_name
+
     supabase = get_supabase_client()
-    normalized_query = material_name.lower().strip()
 
-    # Try exact match on name fields first (fastest)
-    response = (
-        supabase.table("materials")
-        .select("*")
-        .or_(f"name_id.ilike.{normalized_query},name_en.ilike.{normalized_query}")
-        .limit(1)
-        .execute()
-    )
+    # Generate canonical normalized name for deterministic lookup
+    # This handles word order, spacing, and unit variations
+    canonical_query = normalize_material_name(material_name)
+    legacy_query = material_name.lower().strip()
 
-    material = response.data[0] if response.data else None
-
-    # If no exact match, try alias search
-    if not material:
-        # Use PostgreSQL array containment for alias lookup
-        # Note: This requires the query to exactly match an alias
+    # Priority 1: Exact match on normalized_name column (fastest, most reliable)
+    # This is the primary lookup mechanism for cache hits
+    material = None
+    if canonical_query:
         response = (
             supabase.table("materials")
             .select("*")
-            .contains("aliases", [normalized_query])
+            .eq("normalized_name", canonical_query)
             .limit(1)
             .execute()
         )
         material = response.data[0] if response.data else None
 
-    # If still no match, try fuzzy search on names
+    # Priority 2: Fallback to legacy name matching (for pre-migration data)
     if not material:
         response = (
             supabase.table("materials")
             .select("*")
-            .or_(f"name_id.ilike.%{normalized_query}%,name_en.ilike.%{normalized_query}%")
+            .or_(f"name_id.ilike.{legacy_query},name_en.ilike.{legacy_query}")
+            .limit(1)
+            .execute()
+        )
+        material = response.data[0] if response.data else None
+
+    # Priority 3: Alias search (catches brand variations like "semen tiga roda")
+    if not material:
+        response = (
+            supabase.table("materials")
+            .select("*")
+            .contains("aliases", [legacy_query])
+            .limit(1)
+            .execute()
+        )
+        material = response.data[0] if response.data else None
+
+    # Priority 4: Fuzzy substring search on names (last resort)
+    if not material:
+        response = (
+            supabase.table("materials")
+            .select("*")
+            .or_(f"name_id.ilike.%{legacy_query}%,name_en.ilike.%{legacy_query}%")
             .limit(1)
             .execute()
         )
@@ -403,12 +420,19 @@ async def save_material_price_cache(
 
     # Normalize material name for consistent storage and lookup
     # Strip whitespace, normalize to title case for display
-    normalized_name = " ".join(material_name.strip().split())  # Collapse whitespace
-    display_name = normalized_name.title()  # "semen portland" -> "Semen Portland"
-    lookup_key = normalized_name.lower()  # For case-insensitive matching
+    collapsed_name = " ".join(material_name.strip().split())  # Collapse whitespace
+    display_name = collapsed_name.title()  # "semen portland" -> "Semen Portland"
+    lookup_key = collapsed_name.lower()  # For case-insensitive matching
+
+    # Generate canonical normalized name for deterministic cache lookups
+    # This handles word order, spacing, and unit variations
+    from app.utils.text import normalize_material_name
+
+    canonical_name = normalize_material_name(material_name)
 
     # Build update payload with price and seller stats
     update_payload = {
+        "normalized_name": canonical_name,  # Canonical form for exact-match lookups
         "price_min": price_min,
         "price_max": price_max,
         "price_avg": price_avg,
@@ -459,7 +483,7 @@ async def save_material_price_cache(
     material_code = f"DYN-{uuid.uuid4().hex[:8].upper()}"
 
     # Infer unit from material name if possible
-    unit = _infer_unit_from_name(normalized_name)
+    unit = _infer_unit_from_name(collapsed_name)
 
     new_material = {
         "material_code": material_code,
@@ -467,9 +491,9 @@ async def save_material_price_cache(
         "name_en": display_name,  # Same as ID for dynamic entries
         "category": "dynamic",  # Mark as dynamically cached
         "unit": unit,
-        "tokopedia_search": tokopedia_search or normalized_name,
+        "tokopedia_search": tokopedia_search or collapsed_name,
         "aliases": [lookup_key],  # Store lowercase for matching
-        **update_payload,  # Include all price and seller stats
+        **update_payload,  # Include all price and seller stats (including normalized_name)
     }
 
     response = supabase.table("materials").insert(new_material).execute()

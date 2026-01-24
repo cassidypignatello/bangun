@@ -22,6 +22,8 @@ class TestGetCachedMaterialPrice:
             # All queries return empty
             mock_response = MagicMock()
             mock_response.data = []
+            # Mock all 4 priority query chains
+            mock_client.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = mock_response
             mock_client.return_value.table.return_value.select.return_value.or_.return_value.limit.return_value.execute.return_value = mock_response
             mock_client.return_value.table.return_value.select.return_value.contains.return_value.limit.return_value.execute.return_value = mock_response
 
@@ -51,7 +53,8 @@ class TestGetCachedMaterialPrice:
                 "tokopedia_search": "semen tiga roda 40kg",
                 "unit": "sak",
             }]
-            mock_client.return_value.table.return_value.select.return_value.or_.return_value.limit.return_value.execute.return_value = mock_response
+            # Priority 1: normalized_name exact match returns the hit
+            mock_client.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = mock_response
 
             from app.integrations.supabase import get_cached_material_price
 
@@ -75,7 +78,8 @@ class TestGetCachedMaterialPrice:
                 "price_avg": 85000,
                 "price_updated_at": stale_timestamp,
             }]
-            mock_client.return_value.table.return_value.select.return_value.or_.return_value.limit.return_value.execute.return_value = mock_response
+            # Priority 1: normalized_name exact match returns the hit
+            mock_client.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = mock_response
 
             from app.integrations.supabase import get_cached_material_price
 
@@ -95,7 +99,8 @@ class TestGetCachedMaterialPrice:
                 "price_avg": None,  # No price data
                 "price_updated_at": None,
             }]
-            mock_client.return_value.table.return_value.select.return_value.or_.return_value.limit.return_value.execute.return_value = mock_response
+            # Priority 1: normalized_name exact match returns the hit (but no price data)
+            mock_client.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = mock_response
 
             from app.integrations.supabase import get_cached_material_price
 
