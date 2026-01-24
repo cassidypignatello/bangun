@@ -28,10 +28,13 @@ async def create_estimate(project: ProjectInput) -> EstimateResponse:
     now = datetime.utcnow()
 
     # Map to database schema (projects table)
+    # project_type defaults to "general" if not provided (inferred from description by GPT)
+    project_type_value = project.project_type.value if project.project_type else "general"
+
     project_data = {
         "id": project_id,
         "status": "draft",  # project_status enum value
-        "project_type": project.project_type.value,
+        "project_type": project_type_value,
         "description": project.description,
         "location": project.location,
         "bom": [],  # JSONB column for BOM items
@@ -46,7 +49,7 @@ async def create_estimate(project: ProjectInput) -> EstimateResponse:
     return EstimateResponse(
         estimate_id=project_id,
         status=EstimateStatus.PENDING,
-        project_type=project.project_type.value,
+        project_type=project_type_value,
         bom_items=[],
         total_cost_idr=0,
         labor_cost_idr=0,
@@ -79,11 +82,13 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
         )
 
         # Step 1: Generate BOM using GPT-4o-mini
+        # Only description is required - project_type is optional
         project_dict = {
-            "project_type": project.project_type.value,
             "description": project.description,
-            "location": project.location,
         }
+
+        if project.images:
+            project_dict["images"] = [str(url) for url in project.images]
 
         raw_bom = await generate_bom(project_dict)
 

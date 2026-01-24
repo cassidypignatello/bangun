@@ -12,9 +12,7 @@ interface CostEstimateFormProps {
 export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) {
   const { estimate, loading, error, progress, progressMessage, createEstimate } = useEstimate();
   const [formData, setFormData] = useState<CreateEstimateRequest>({
-    project_type: '',
     description: '',
-    location: '',
     images: [],
   });
 
@@ -53,57 +51,25 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
     <div className="space-y-6">
       <form onSubmit={handleSubmit} className="space-y-6">
         <div>
-          <label htmlFor="project_type" className="block text-sm font-medium text-gray-700 mb-2">
-            Project Type
-          </label>
-          <select
-            id="project_type"
-            name="project_type"
-            value={formData.project_type}
-            onChange={handleChange}
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
-            required
-          >
-            <option value="">Select a project type...</option>
-            <option value="villa_construction">Villa Construction</option>
-            <option value="home_renovation">Home Renovation</option>
-            <option value="bathroom_renovation">Bathroom Renovation</option>
-            <option value="kitchen_renovation">Kitchen Renovation</option>
-            <option value="pool_construction">Pool Construction</option>
-            <option value="extension">Extension</option>
-          </select>
-        </div>
-
-        <div>
           <label htmlFor="description" className="block text-sm font-medium text-gray-700 mb-2">
-            Project Description
+            Describe Your Project
           </label>
           <textarea
             id="description"
             name="description"
             value={formData.description}
             onChange={handleChange}
-            placeholder="Describe your project in detail (minimum 10 characters)..."
-            rows={4}
+            placeholder="Tell us about your renovation or construction project. Include details like dimensions, materials you prefer, and any specific requirements...
+
+Example: I want to renovate my 3x4m bathroom with a walk-in shower, new ceramic tiles, modern fixtures, and waterproofing."
+            rows={6}
             minLength={10}
             className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
             required
           />
-        </div>
-
-        <div>
-          <label htmlFor="location" className="block text-sm font-medium text-gray-700 mb-2">
-            Location (optional)
-          </label>
-          <input
-            type="text"
-            id="location"
-            name="location"
-            value={formData.location}
-            onChange={handleChange}
-            placeholder="e.g., Canggu, Ubud"
-            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-black"
-          />
+          <p className="mt-1 text-sm text-gray-500">
+            The more detail you provide, the more accurate your estimate will be.
+          </p>
         </div>
 
         {error && (
@@ -144,7 +110,7 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
           {/* Header */}
           <div className="border-b border-gray-200 pb-4">
             <h3 className="text-xl font-semibold text-gray-900 mb-2">
-              Estimate for {estimate.project_type.replace(/_/g, ' ')}
+              Your Project Estimate
             </h3>
             <p className="text-sm text-gray-500">
               Created {new Date(estimate.created_at).toLocaleDateString()}
@@ -152,10 +118,7 @@ export function CostEstimateForm({ onEstimateComplete }: CostEstimateFormProps) 
           </div>
 
           {/* Interactive Shopping List */}
-          <MaterialChecklist
-            bomItems={estimate.bom_items}
-            projectType={estimate.project_type}
-          />
+          <MaterialChecklist bomItems={estimate.bom_items} />
 
           {/* Labor & Grand Total Summary */}
           <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2">

@@ -24,44 +24,41 @@ class ProjectInput(BaseModel):
 
     Example:
         {
-            "project_type": "villa_construction",
-            "description": "3-bedroom villa with pool, 200m2",
-            "images": ["https://example.com/image1.jpg"],
-            "location": "Canggu, Bali"
+            "description": "Renovate my 3x4m bathroom with walk-in shower and new tiles",
+            "images": ["https://example.com/bathroom-ref.jpg"]
         }
     """
 
-    project_type: ProjectType = Field(
-        ..., description="Type of construction or renovation project"
-    )
     description: str = Field(
         ...,
         min_length=10,
         max_length=2000,
-        description="Detailed project description",
-        examples=["Modern 3-bedroom villa with infinity pool, 200m2, minimalist design"],
+        description="Detailed project description - include dimensions, materials, and requirements",
+        examples=[
+            "Renovate my 3x4m bathroom with walk-in shower, ceramic tiles, and modern fixtures",
+            "Build a 6x12m infinity pool with glass mosaic tiles and integrated jacuzzi",
+        ],
     )
     images: list[HttpUrl | str] = Field(
         default_factory=list,
         max_length=10,
         description="URLs of reference images or design plans",
     )
+    # Kept for backward compatibility but not required in UI
+    project_type: ProjectType | None = Field(
+        default=None,
+        description="Optional project type - will be inferred from description if not provided",
+    )
     location: str = Field(
         default="Bali",
         max_length=200,
-        description="Project location in Bali",
-        examples=["Canggu", "Ubud", "Seminyak"],
+        description="Project location (defaults to Bali)",
     )
 
     class Config:
         json_schema_extra = {
             "example": {
-                "project_type": "villa_construction",
-                "description": "Modern 3-bedroom villa with infinity pool, 200m2, tropical design",
-                "images": [
-                    "https://example.com/villa-front.jpg",
-                    "https://example.com/villa-pool.jpg",
-                ],
-                "location": "Canggu, Bali",
+                "description": "Renovate my 3x4m bathroom with walk-in shower, ceramic tiles, and modern fixtures",
+                "images": ["https://example.com/bathroom-ref.jpg"],
             }
         }

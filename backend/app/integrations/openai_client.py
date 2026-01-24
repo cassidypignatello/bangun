@@ -91,16 +91,14 @@ async def generate_bom(project_input: dict) -> list[dict]:
     """
     client = get_openai_client()
 
-    # Build user prompt from project input
-    user_prompt = f"""Generate a Bill of Materials for this project:
+    # Build user prompt from project input (simplified - description is the primary input)
+    user_prompt = f"""Generate a Bill of Materials for this Bali construction/renovation project:
 
-Project Type: {project_input['project_type']}
-Description: {project_input['description']}
-Location: {project_input.get('location', 'Bali')}
+{project_input['description']}
 """
 
     if project_input.get("images"):
-        user_prompt += f"\nReference Images: {len(project_input['images'])} provided"
+        user_prompt += f"\n(Reference images provided: {len(project_input['images'])})"
 
     try:
         response = await client.chat.completions.create(

@@ -10,9 +10,7 @@ import type {
 } from "../types";
 
 export interface CreateEstimateRequest {
-  project_type: string;
   description: string;
-  location?: string;
   images?: string[];
 }
 

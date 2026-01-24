@@ -48,16 +48,13 @@ def mock_settings():
 @pytest.fixture
 def sample_project_input():
     """
-    Sample project input for testing
+    Sample project input for testing (simplified - only description required)
 
     Returns:
         dict: Valid project input data
     """
     return {
-        "project_type": "bathroom_renovation",
-        "description": "Modern bathroom renovation with ceramic tiles, 10m2",
-        "images": [],
-        "location": "Canggu, Bali",
+        "description": "Modern 3x4m bathroom renovation with ceramic tiles, walk-in shower, and new fixtures in Canggu",
     }
 
 
