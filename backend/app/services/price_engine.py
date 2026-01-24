@@ -9,6 +9,7 @@ Designed for future multi-source aggregation (Shopee, local stores, etc.)
 import re
 
 from app.integrations.apify import get_best_price, scrape_tokopedia_prices
+from app.integrations.supabase import save_material_price_cache
 from app.services.semantic_matcher import enhance_search_term, match_material
 
 
@@ -35,6 +36,7 @@ async def enrich_single_material(material: dict) -> dict:
 
     if matched:
         # Cache hit - use historical data
+        print(f"  💾 CACHE HIT: {material_name} → Rp {matched['unit_price_idr']:,} (source: {matched['source']})")
         unit_price = matched["unit_price_idr"]
         total_price = int(unit_price * quantity)
 
@@ -51,6 +53,7 @@ async def enrich_single_material(material: dict) -> dict:
         }
 
     # Cache miss - scrape Tokopedia with quality filtering
+    print(f"  🔍 CACHE MISS: {material_name} → Scraping Tokopedia...")
     try:
         # Enhance search term for better marketplace results
         search_term = await enhance_search_term(material_name)
@@ -66,6 +69,22 @@ async def enrich_single_material(material: dict) -> dict:
                 products = await scrape_tokopedia_prices(simplified_term, max_results=10)
 
         if products:
+            # ✅ CRITICAL FIX: Save scraped prices to cache for future lookups
+            # This was missing - prices were scraped but never persisted!
+            try:
+                saved_id = await save_material_price_cache(
+                    material_name=material_name,
+                    prices=products,
+                    tokopedia_search=search_term,
+                )
+                if saved_id:
+                    print(f"  ✅ CACHED: {material_name} → saved {len(products)} prices to DB")
+                else:
+                    print(f"  ⚠️ CACHE SAVE FAILED: {material_name} (no valid prices)")
+            except Exception as cache_error:
+                # Don't fail the request if caching fails - just log it
+                print(f"  ⚠️ CACHE SAVE ERROR: {material_name} - {cache_error}")
+
             # Get best price using quality-based filtering
             # Filters unreliable sellers and products with insufficient stock
             # Uses median of trusted products that can fulfill the BOM quantity

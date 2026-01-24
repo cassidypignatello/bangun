@@ -10,8 +10,10 @@ from app.utils.resilience import (
     with_retry,
     with_timeout,
 )
+from app.utils.text import normalize_material_name
 
 __all__ = [
+    "normalize_material_name",
     "CircuitBreaker",
     "CircuitBreakerError",
     "with_circuit_breaker",
