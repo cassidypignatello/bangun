@@ -939,6 +939,7 @@ async def get_best_material_price(
     # =========================================================================
     cached_best = await price_scrape_cache.get(cache_key)
     if cached_best is not None:
+        print(f"  💾 CACHE HIT [Tier 1 Memory]: {material_name} → Rp {cached_best.get('price_idr', 0):,}")
         return cached_best
 
     # =========================================================================
@@ -947,6 +948,7 @@ async def get_best_material_price(
     try:
         db_cache = await get_cached_material_price(material_name)
         if db_cache and db_cache.get("is_fresh") and db_cache.get("price_avg"):
+            print(f"  💾 CACHE HIT [Tier 2 Database]: {material_name} → Rp {db_cache.get('price_avg', 0):,}")
             # Return cached best seller data
             cached_result = {
                 "name": db_cache.get("name_id", material_name),
@@ -973,6 +975,7 @@ async def get_best_material_price(
     # =========================================================================
     # TIER 3: Live scrape with Best Seller scoring
     # =========================================================================
+    print(f"  🔍 CACHE MISS: {material_name} → Scraping Tokopedia via Apify...")
     # Scrape more results than needed for better ranking quality
     raw_results = await scrape_tokopedia_prices(
         material_name=material_name,
