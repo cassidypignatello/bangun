@@ -1,12 +1,13 @@
 'use client';
 
-import { WorkerSearchForm } from '@/components/WorkerSearchForm';
-import { WorkerSearchResults } from '@/components/WorkerSearchResults';
+// Worker search components temporarily hidden - focusing on BOM generation
+// import { WorkerSearchForm } from '@/components/WorkerSearchForm';
+// import { WorkerSearchResults } from '@/components/WorkerSearchResults';
 import { CostEstimateForm } from '@/components/CostEstimateForm';
-import { useWorkerSearch } from '@/lib/hooks';
+// import { useWorkerSearch } from '@/lib/hooks';
 
 export default function Home() {
-  const { data } = useWorkerSearch();
+  // const { data } = useWorkerSearch();
 
   return (
     <main className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
@@ -20,16 +21,17 @@ export default function Home() {
           </p>
         </div>
 
-        <WorkerSearchForm />
+        {/* Worker search section temporarily hidden - focusing on BOM generation */}
+        {/* <WorkerSearchForm /> */}
 
-        {data && (
+        {/* {data && (
           <WorkerSearchResults
             workers={data.workers}
             unlockPriceIdr={data.unlock_price_idr}
           />
-        )}
+        )} */}
 
-        <div className="mt-12 bg-white rounded-lg shadow-lg p-8">
+        <div className="bg-white rounded-lg shadow-lg p-8">
           <h2 className="text-2xl font-semibold mb-6 text-gray-900">
             Get Your Project Estimate
           </h2>
