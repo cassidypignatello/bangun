@@ -3,15 +3,7 @@
 
 [build]
 builder = "nixpacks"
-
-[build.nixpacksPlan.phases.setup]
-nixPkgs = ["nodejs_20"]
-
-[build.nixpacksPlan.phases.install]
-cmds = ["npm ci"]
-
-[build.nixpacksPlan.phases.build]
-cmds = ["npm run build"]
+buildCommand = "npm ci && npm run build"
 
 [deploy]
 startCommand = "npm start"
