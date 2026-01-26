@@ -91,7 +91,7 @@ function EstimateForm() {
 
       {estimate && (
         <div>
-          Total: Rp {estimate.grand_total_idr.toLocaleString()}
+          Materials Total: Rp {estimate.total_cost_idr.toLocaleString()}
         </div>
       )}
     </form>

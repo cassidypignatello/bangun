@@ -31,8 +31,6 @@ export interface EstimateResponse {
   project_type: string;
   bom_items: BOMItem[];
   total_cost_idr: number;
-  labor_cost_idr: number;
-  grand_total_idr: number;
   created_at: string;
   updated_at: string;
   error_message: string | null;

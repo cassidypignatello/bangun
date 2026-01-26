@@ -29,7 +29,9 @@ async def create_estimate(project: ProjectInput) -> EstimateResponse:
 
     # Map to database schema (projects table)
     # project_type defaults to "general" if not provided (inferred from description by GPT)
-    project_type_value = project.project_type.value if project.project_type else "general"
+    project_type_value = (
+        project.project_type.value if project.project_type else "general"
+    )
 
     project_data = {
         "id": project_id,
@@ -39,8 +41,6 @@ async def create_estimate(project: ProjectInput) -> EstimateResponse:
         "location": project.location,
         "bom": [],  # JSONB column for BOM items
         "material_total": 0,
-        "labor_total": 0,
-        "total_estimate": 0,
     }
 
     # Save to database
@@ -52,8 +52,6 @@ async def create_estimate(project: ProjectInput) -> EstimateResponse:
         project_type=project_type_value,
         bom_items=[],
         total_cost_idr=0,
-        labor_cost_idr=0,
-        grand_total_idr=0,
         created_at=now,
         updated_at=now,
     )
@@ -78,7 +76,11 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
         await update_project_status(
             estimate_id,
             "draft",
-            price_range={"step": "generating_bom", "progress": 10, "status": "processing"},
+            price_range={
+                "step": "generating_bom",
+                "progress": 10,
+                "status": "processing",
+            },
         )
 
         # Step 1: Generate BOM using GPT-4o-mini
@@ -109,7 +111,9 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
 
         # Step 2: Enrich with real-time prices (or mock data in dev mode)
         # Progress callback to update UI during slow Apify scraping
-        async def on_price_progress(current: int, total: int, material_name: str, source: str):
+        async def on_price_progress(
+            current: int, total: int, material_name: str, source: str
+        ):
             # Map 0..total to 30..80 progress range
             item_progress = 30 + int((current / total) * 50) if total > 0 else 30
             await update_project_status(
@@ -130,13 +134,19 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
             # Use mock prices in development to avoid Apify costs
             enriched_bom = await _mock_enrich_bom(raw_bom)
         else:
-            enriched_bom = await enrich_bom_with_prices(raw_bom, on_progress=on_price_progress)
+            enriched_bom = await enrich_bom_with_prices(
+                raw_bom, on_progress=on_price_progress
+            )
 
         # Update progress after price enrichment
         await update_project_status(
             estimate_id,
             "draft",
-            price_range={"step": "calculating_totals", "progress": 80, "status": "processing"},
+            price_range={
+                "step": "calculating_totals",
+                "progress": 80,
+                "status": "processing",
+            },
         )
 
         # Step 3: Calculate totals
@@ -160,19 +170,12 @@ async def process_estimate(estimate_id: str, project: ProjectInput) -> None:
             bom_items.append(bom_item)
             total_cost += item["total_price_idr"]
 
-        # Step 4: Calculate labor costs (simple heuristic: 30% of material cost)
-        labor_cost = int(total_cost * 0.3)
-        grand_total = total_cost + labor_cost
-
-        # Step 5: Update database with completed estimate
-        # Map to database schema
+        # Step 4: Update database with completed estimate
         await update_project_status(
             estimate_id,
             "estimated",  # project_status enum value for completed estimates
             bom=[item.model_dump() for item in bom_items],  # JSONB column
             material_total=total_cost,
-            labor_total=labor_cost,
-            total_estimate=grand_total,
             price_range={"step": "completed", "progress": 100},
         )
 
@@ -212,7 +215,9 @@ async def _mock_enrich_bom(bom_items: list[dict]) -> list[dict]:
         category = item.get("category", "miscellaneous").lower()
         prices = category_prices.get(category, category_prices["miscellaneous"])
 
-        unit_price = prices["base"] + random.randint(-prices["variance"], prices["variance"])
+        unit_price = prices["base"] + random.randint(
+            -prices["variance"], prices["variance"]
+        )
         quantity = item.get("quantity", 1)
         total_price = int(unit_price * quantity)
 
@@ -220,16 +225,18 @@ async def _mock_enrich_bom(bom_items: list[dict]) -> list[dict]:
         search_term = quote(item["material_name"])
         mock_url = f"https://www.tokopedia.com/search?q={search_term}"
 
-        enriched.append({
-            "material_name": item["material_name"],
-            "english_name": item.get("english_name"),  # Pass through from OpenAI
-            "quantity": quantity,
-            "unit": item.get("unit", "pcs"),
-            "unit_price_idr": unit_price,
-            "total_price_idr": total_price,
-            "source": "mock_data",
-            "confidence": 0.5,
-            "marketplace_url": mock_url,
-        })
+        enriched.append(
+            {
+                "material_name": item["material_name"],
+                "english_name": item.get("english_name"),  # Pass through from OpenAI
+                "quantity": quantity,
+                "unit": item.get("unit", "pcs"),
+                "unit_price_idr": unit_price,
+                "total_price_idr": total_price,
+                "source": "mock_data",
+                "confidence": 0.5,
+                "marketplace_url": mock_url,
+            }
+        )
 
     return enriched

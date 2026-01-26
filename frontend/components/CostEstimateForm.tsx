@@ -164,18 +164,6 @@ Example: I want to renovate my 3x4m bathroom with a walk-in shower, new ceramic 
               {/* Interactive Shopping List */}
               <MaterialChecklist bomItems={estimate.bom_items} />
 
-              {/* Labor & Grand Total Summary */}
-              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 space-y-2">
-                <div className="flex justify-between text-gray-700">
-                  <span>Estimated Labor (30% of materials):</span>
-                  <span className="font-semibold">{formatPrice(estimate.labor_cost_idr)}</span>
-                </div>
-                <div className="flex justify-between text-lg font-bold text-gray-900 pt-2 border-t border-gray-300">
-                  <span>Project Grand Total:</span>
-                  <span>{formatPrice(estimate.grand_total_idr)}</span>
-                </div>
-              </div>
-
               {/* Note */}
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                 <p className="text-sm text-yellow-800">

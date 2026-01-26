@@ -184,13 +184,15 @@ async def get_estimate_details(request: Request, estimate_id: str):
         project_type=project_data.get("project_type", ""),
         bom_items=bom_items,
         total_cost_idr=int(project_data.get("material_total") or 0),
-        labor_cost_idr=int(project_data.get("labor_total") or 0),
-        grand_total_idr=int(project_data.get("total_estimate") or 0),
-        created_at=datetime.fromisoformat(project_data["created_at"].replace("Z", "+00:00"))
-        if isinstance(project_data.get("created_at"), str)
-        else project_data.get("created_at"),
-        updated_at=datetime.fromisoformat(project_data["updated_at"].replace("Z", "+00:00"))
-        if isinstance(project_data.get("updated_at"), str)
-        else project_data.get("updated_at"),
+        created_at=(
+            datetime.fromisoformat(project_data["created_at"].replace("Z", "+00:00"))
+            if isinstance(project_data.get("created_at"), str)
+            else project_data.get("created_at")
+        ),
+        updated_at=(
+            datetime.fromisoformat(project_data["updated_at"].replace("Z", "+00:00"))
+            if isinstance(project_data.get("updated_at"), str)
+            else project_data.get("updated_at")
+        ),
         error_message=error_message,
     )
