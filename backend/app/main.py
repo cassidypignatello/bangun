@@ -1,5 +1,5 @@
 """
-FastAPI application entry point for Bali Renovation OS
+FastAPI application entry point for Bangun
 Includes Sentry monitoring, CORS, rate limiting, error handling, and background jobs
 """
 

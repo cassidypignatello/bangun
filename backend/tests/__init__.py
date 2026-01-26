@@ -1,1 +1,1 @@
-"""Test suite for Bali Renovation OS backend"""
+"""Test suite for Bangun backend"""

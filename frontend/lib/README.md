@@ -1,6 +1,6 @@
 # Frontend API Integration
 
-Type-safe API client and React hooks for the Bali Renovation OS backend.
+Type-safe API client and React hooks for the Bangun backend.
 
 ## Architecture
 

@@ -1,6 +1,6 @@
 # API Testing Guide
 
-Comprehensive testing strategy for Bali Renovation OS backend API endpoints.
+Comprehensive testing strategy for Bangun backend API endpoints.
 
 ## Testing Levels
 

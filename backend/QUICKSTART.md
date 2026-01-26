@@ -5,7 +5,7 @@
 ### 1. Environment Setup (2 min)
 
 ```bash
-cd /Users/cass/code/bali-renovation-os/backend
+cd backend
 
 # Copy environment template
 cp .env.example .env
@@ -109,10 +109,10 @@ Quick Supabase setup:
 
 ## File Locations
 
-- **Main app**: `/Users/cass/code/bali-renovation-os/backend/app/main.py`
-- **Config**: `/Users/cass/code/bali-renovation-os/backend/app/config.py`
-- **Routes**: `/Users/cass/code/bali-renovation-os/backend/app/routes/`
-- **Environment**: `/Users/cass/code/bali-renovation-os/backend/.env`
+- **Main app**: `app/main.py`
+- **Config**: `app/config.py`
+- **Routes**: `app/routes/`
+- **Environment**: `.env`
 
 ---
 

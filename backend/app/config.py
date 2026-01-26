@@ -40,9 +40,9 @@ class Settings(BaseSettings):
     sentry_dsn: str | None = None
 
     # API Configuration
-    api_title: str = "Bali Renovation OS API"
+    api_title: str = "Bangun API"
     api_version: str = "0.1.0"
-    api_description: str = "AI-powered construction cost estimation platform for Bali"
+    api_description: str = "AI-powered construction cost estimation for Indonesia"
 
     # Rate Limiting
     rate_limit_per_minute: int = 60

@@ -2,7 +2,7 @@
 
 ## Overview
 
-Complete type-safe API integration between Next.js 15 frontend and FastAPI backend for Bali Renovation OS.
+Complete type-safe API integration between Next.js 15 frontend and FastAPI backend for Bangun.
 
 ## Implementation Status ✅
 

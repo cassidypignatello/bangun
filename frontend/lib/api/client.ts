@@ -1,5 +1,5 @@
 /**
- * Type-safe API client for Bali Renovation OS backend
+ * Type-safe API client for Bangun backend
  * Handles authentication, error handling, and request/response transformation
  */
 

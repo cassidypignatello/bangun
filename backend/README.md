@@ -1,6 +1,6 @@
-# Bali Renovation OS - Backend API
+# Bangun - Backend API
 
-AI-powered construction cost estimation platform for Bali, Indonesia.
+AI-powered construction cost estimation for Indonesia.
 
 ## Tech Stack
 
@@ -255,4 +255,4 @@ Weighted formula:
 
 ## License
 
-Proprietary - Bali Renovation OS
+Proprietary - Bangun

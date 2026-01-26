@@ -14,10 +14,10 @@ export default function Home() {
       <div className="max-w-4xl mx-auto px-4 py-12">
         <div className="text-center mb-12">
           <h1 className="text-4xl font-bold text-gray-900 mb-4">
-            Bali Renovation OS
+            Bangun
           </h1>
           <p className="text-xl text-gray-600">
-            Fair pricing and trusted workers for your Bali renovation
+            Know before you build.
           </p>
         </div>
 

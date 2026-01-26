@@ -2,7 +2,7 @@
 
 ## Overview
 
-Successfully created a production-ready FastAPI backend for Bali Renovation OS with complete implementation of all core features.
+Successfully created a production-ready FastAPI backend for Bangun with complete implementation of all core features.
 
 **Status**: ✅ Complete - All 7 checkpoints finished
 **Files Created**: 31 files
@@ -217,20 +217,17 @@ def calculate_trust_score(...) -> float:
 ### 1. Database Schema Setup (Supabase)
 Create tables in Supabase:
 
-**estimates**
+**projects**
 ```sql
-CREATE TABLE estimates (
-    estimate_id TEXT PRIMARY KEY,
+CREATE TABLE projects (
+    id TEXT PRIMARY KEY,
     status TEXT NOT NULL,
     project_type TEXT NOT NULL,
     description TEXT,
     location TEXT,
-    images JSONB,
-    bom_items JSONB,
-    total_cost_idr INTEGER,
-    labor_cost_idr INTEGER,
-    grand_total_idr INTEGER,
-    error_message TEXT,
+    bom JSONB,
+    material_total INTEGER,
+    price_range JSONB,
     created_at TIMESTAMP WITH TIME ZONE,
     updated_at TIMESTAMP WITH TIME ZONE
 );
