@@ -1,0 +1,21 @@
+# Railway configuration for Bangun Frontend (Next.js)
+# https://docs.railway.app/reference/config-as-code
+
+[build]
+builder = "nixpacks"
+
+[build.nixpacksPlan.phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[build.nixpacksPlan.phases.install]
+cmds = ["npm ci"]
+
+[build.nixpacksPlan.phases.build]
+cmds = ["npm run build"]
+
+[deploy]
+startCommand = "npm start"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
