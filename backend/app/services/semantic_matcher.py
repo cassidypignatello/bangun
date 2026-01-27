@@ -62,10 +62,13 @@ async def find_exact_match(material_name: str) -> dict | None:
                 if price_avg > 0:
                     return {
                         "material_name": get_material_display_name(entry),
-                        "unit_price_idr": int(price_avg),  # Convert Decimal/float to int for Pydantic
+                        "unit_price_idr": int(
+                            price_avg
+                        ),  # Convert Decimal/float to int for Pydantic
                         "source": "cached",  # Clear indicator of cache hit
                         "confidence": 1.0,  # Exact normalized match = perfect confidence
-                        "marketplace_url": entry.get("tokopedia_search"),
+                        # Use actual product URL if available, not just search term
+                        "marketplace_url": entry.get("tokopedia_affiliate_url"),
                     }
         except Exception:
             pass  # Fall through to fuzzy search
@@ -89,10 +92,13 @@ async def find_exact_match(material_name: str) -> dict | None:
         if similarity > 0.95:
             return {
                 "material_name": get_material_display_name(entry),
-                "unit_price_idr": int(entry.get("price_avg", 0) or 0),  # Convert to int for Pydantic
+                "unit_price_idr": int(
+                    entry.get("price_avg", 0) or 0
+                ),  # Convert to int for Pydantic
                 "source": "historical",
                 "confidence": similarity,
-                "marketplace_url": entry.get("tokopedia_search"),  # Use search term as fallback
+                # Use actual product URL if available, not just search term
+                "marketplace_url": entry.get("tokopedia_affiliate_url"),
             }
 
     return None
@@ -133,10 +139,13 @@ async def find_fuzzy_match(material_name: str, threshold: float = 0.90) -> dict 
             best_score = similarity
             best_match = {
                 "material_name": get_material_display_name(entry),
-                "unit_price_idr": int(entry.get("price_avg", 0) or 0),  # Convert to int for Pydantic
+                "unit_price_idr": int(
+                    entry.get("price_avg", 0) or 0
+                ),  # Convert to int for Pydantic
                 "source": "historical_fuzzy",
                 "confidence": similarity,
-                "marketplace_url": entry.get("tokopedia_search"),
+                # Use actual product URL if available, not just search term
+                "marketplace_url": entry.get("tokopedia_affiliate_url"),
             }
 
     return best_match

@@ -33,6 +33,7 @@ def get_supabase_client() -> Client:
 # PROJECTS (formerly "estimates")
 # ============================================
 
+
 async def save_project(project_data: dict) -> dict:
     """
     Save project/estimate to database
@@ -59,9 +60,7 @@ async def get_project(project_id: str) -> dict | None:
         dict | None: Project data or None if not found
     """
     supabase = get_supabase_client()
-    response = (
-        supabase.table("projects").select("*").eq("id", project_id).execute()
-    )
+    response = supabase.table("projects").select("*").eq("id", project_id).execute()
     return response.data[0] if response.data else None
 
 
@@ -99,12 +98,7 @@ async def update_project(project_id: str, **kwargs) -> dict | None:
         dict | None: Updated project data
     """
     supabase = get_supabase_client()
-    response = (
-        supabase.table("projects")
-        .update(kwargs)
-        .eq("id", project_id)
-        .execute()
-    )
+    response = supabase.table("projects").update(kwargs).eq("id", project_id).execute()
     return response.data[0] if response.data else None
 
 
@@ -125,6 +119,7 @@ async def update_project_status(project_id: str, status: str, **kwargs) -> None:
 # ============================================
 # MATERIALS
 # ============================================
+
 
 async def get_material_by_code(material_code: str) -> dict | None:
     """
@@ -198,10 +193,7 @@ async def get_materials_by_category(category: str) -> list[dict]:
     """
     supabase = get_supabase_client()
     response = (
-        supabase.table("materials")
-        .select("*")
-        .eq("category", category)
-        .execute()
+        supabase.table("materials").select("*").eq("category", category).execute()
     )
     return response.data if response.data else []
 
@@ -211,7 +203,7 @@ async def update_material_prices(
     price_min: float,
     price_max: float,
     price_avg: float,
-    sample_size: int
+    sample_size: int,
 ) -> None:
     """
     Update cached pricing for a material
@@ -224,13 +216,15 @@ async def update_material_prices(
         sample_size: Number of price samples
     """
     supabase = get_supabase_client()
-    supabase.table("materials").update({
-        "price_min": price_min,
-        "price_max": price_max,
-        "price_avg": price_avg,
-        "price_sample_size": sample_size,
-        "price_updated_at": "now()"
-    }).eq("id", material_id).execute()
+    supabase.table("materials").update(
+        {
+            "price_min": price_min,
+            "price_max": price_max,
+            "price_avg": price_avg,
+            "price_sample_size": sample_size,
+            "price_updated_at": "now()",
+        }
+    ).eq("id", material_id).execute()
 
 
 # ============================================
@@ -361,6 +355,7 @@ async def get_cached_material_price(material_name: str) -> dict | None:
         "price_updated_at": price_updated_at,
         "is_fresh": is_fresh,
         "tokopedia_search": material.get("tokopedia_search"),
+        "tokopedia_affiliate_url": material.get("tokopedia_affiliate_url"),
         "unit": material.get("unit"),
     }
 
@@ -391,9 +386,7 @@ async def save_material_price_cache(
     # Calculate price statistics
     # Handle None values safely by converting to 0 first
     valid_prices = [
-        p.get("price_idr", 0) or 0
-        for p in prices
-        if (p.get("price_idr", 0) or 0) > 0
+        p.get("price_idr", 0) or 0 for p in prices if (p.get("price_idr", 0) or 0) > 0
     ]
     if not valid_prices:
         return None
@@ -411,10 +404,20 @@ async def save_material_price_cache(
 
     # Calculate seller statistics from scraped data
     # Import the mapper from apify module
-    from app.integrations.apify import map_tokopedia_product, aggregate_seller_stats
+    from app.integrations.apify import (
+        map_tokopedia_product,
+        aggregate_seller_stats,
+        get_best_price,
+    )
 
     mapped_products = [map_tokopedia_product(p) for p in prices]
     seller_stats = aggregate_seller_stats(mapped_products)
+
+    # Get the best quality product URL for affiliate links
+    # This ensures cached lookups return a real Tokopedia product URL
+    best_price_result = get_best_price(prices)
+    best_product = best_price_result.get("source_product")
+    best_product_url = best_product.get("url", "") if best_product else ""
 
     supabase = get_supabase_client()
 
@@ -445,6 +448,8 @@ async def save_material_price_cache(
         "count_sold_total": seller_stats.get("count_sold_total", 0),
         "seller_location": seller_stats.get("seller_location"),
         "seller_tier": seller_stats.get("seller_tier"),
+        # Store actual product URL for affiliate links (not just search term)
+        "tokopedia_affiliate_url": best_product_url if best_product_url else None,
     }
 
     # Try to find existing material (case-insensitive)
@@ -460,7 +465,9 @@ async def save_material_price_cache(
     if response.data:
         # Update existing material
         material_id = response.data[0]["id"]
-        supabase.table("materials").update(update_payload).eq("id", material_id).execute()
+        supabase.table("materials").update(update_payload).eq(
+            "id", material_id
+        ).execute()
         return material_id
 
     # Also check aliases array (catches "semen tiga roda" -> "Semen Portland")
@@ -474,12 +481,15 @@ async def save_material_price_cache(
 
     if alias_response.data:
         material_id = alias_response.data[0]["id"]
-        supabase.table("materials").update(update_payload).eq("id", material_id).execute()
+        supabase.table("materials").update(update_payload).eq(
+            "id", material_id
+        ).execute()
         return material_id
 
     # Create new material entry (dynamic cache entry)
     # Generate a material code for new entries
     import uuid
+
     material_code = f"DYN-{uuid.uuid4().hex[:8].upper()}"
 
     # Infer unit from material name if possible
@@ -527,7 +537,9 @@ def _infer_unit_from_name(material_name: str) -> str:
         return "meter"
 
     # Sheet/board materials
-    if any(w in name_lower for w in ["lembar", "sheet", "plywood", "gypsum", "triplek"]):
+    if any(
+        w in name_lower for w in ["lembar", "sheet", "plywood", "gypsum", "triplek"]
+    ):
         return "lembar"
 
     # Rod/bar materials
@@ -587,13 +599,17 @@ async def get_stale_materials(max_age_days: int = 7, limit: int = 50) -> list[di
     from datetime import datetime, timedelta, timezone
 
     supabase = get_supabase_client()
-    cutoff_date = (datetime.now(timezone.utc) - timedelta(days=max_age_days)).isoformat()
+    cutoff_date = (
+        datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    ).isoformat()
 
     # Get materials with stale or missing prices
     # Priority: materials with no price_updated_at, then oldest first
     response = (
         supabase.table("materials")
-        .select("id, material_code, name_id, name_en, tokopedia_search, price_updated_at")
+        .select(
+            "id, material_code, name_id, name_en, tokopedia_search, price_updated_at"
+        )
         .or_(f"price_updated_at.is.null,price_updated_at.lt.{cutoff_date}")
         .order("price_updated_at", desc=False, nullsfirst=True)
         .limit(limit)
@@ -607,6 +623,7 @@ async def get_stale_materials(max_age_days: int = 7, limit: int = 50) -> list[di
 # WORKERS
 # ============================================
 
+
 async def get_worker_by_id(worker_id: str) -> dict | None:
     """
     Get worker details by ID
@@ -618,16 +635,12 @@ async def get_worker_by_id(worker_id: str) -> dict | None:
         dict | None: Worker data or None if not found
     """
     supabase = get_supabase_client()
-    response = (
-        supabase.table("workers").select("*").eq("id", worker_id).execute()
-    )
+    response = supabase.table("workers").select("*").eq("id", worker_id).execute()
     return response.data[0] if response.data else None
 
 
 async def get_workers_by_specialization(
-    specialization: str,
-    area: str | None = None,
-    limit: int = 20
+    specialization: str, area: str | None = None, limit: int = 20
 ) -> list[dict]:
     """
     Get workers matching a specialization, optionally filtered by area
@@ -651,12 +664,7 @@ async def get_workers_by_specialization(
     if area:
         query = query.eq("area", area)
 
-    response = (
-        query
-        .order("trust_score", desc=True)
-        .limit(limit)
-        .execute()
-    )
+    response = query.order("trust_score", desc=True).limit(limit).execute()
     return response.data if response.data else []
 
 
@@ -676,10 +684,7 @@ async def save_worker(worker_data: dict) -> dict:
 
 
 async def update_worker_trust(
-    worker_id: str,
-    trust_score: int,
-    trust_level: str,
-    trust_breakdown: dict
+    worker_id: str, trust_score: int, trust_level: str, trust_breakdown: dict
 ) -> None:
     """
     Update worker's trust score
@@ -691,12 +696,14 @@ async def update_worker_trust(
         trust_breakdown: Detailed score breakdown
     """
     supabase = get_supabase_client()
-    supabase.table("workers").update({
-        "trust_score": trust_score,
-        "trust_level": trust_level,
-        "trust_breakdown": trust_breakdown,
-        "last_score_calculated_at": "now()"
-    }).eq("id", worker_id).execute()
+    supabase.table("workers").update(
+        {
+            "trust_score": trust_score,
+            "trust_level": trust_level,
+            "trust_breakdown": trust_breakdown,
+            "last_score_calculated_at": "now()",
+        }
+    ).eq("id", worker_id).execute()
 
 
 async def bulk_insert_workers(workers: list[dict]) -> list[dict]:
@@ -727,8 +734,7 @@ async def bulk_insert_workers(workers: list[dict]) -> list[dict]:
 
 
 async def get_cached_workers(
-    specialization: str,
-    max_age_hours: int = 168  # 7 days default
+    specialization: str, max_age_hours: int = 168  # 7 days default
 ) -> list[dict] | None:
     """
     Check if we have recently scraped workers for a specialization.
@@ -777,10 +783,9 @@ async def update_worker_scraped_timestamp(worker_ids: list[str]) -> None:
 
     # Batch update using IN clause
     now = datetime.now(timezone.utc).isoformat()
-    supabase.table("workers").update({
-        "last_scraped_at": now,
-        "updated_at": now
-    }).in_("id", worker_ids).execute()
+    supabase.table("workers").update({"last_scraped_at": now, "updated_at": now}).in_(
+        "id", worker_ids
+    ).execute()
 
 
 async def search_workers(
@@ -788,7 +793,7 @@ async def search_workers(
     location: str | None = None,
     min_trust_score: int = 0,
     min_rating: float = 0.0,
-    limit: int = 20
+    limit: int = 20,
 ) -> list[dict]:
     """
     Search workers with flexible filters.
@@ -818,12 +823,7 @@ async def search_workers(
     if min_rating > 0:
         query = query.gte("gmaps_rating", min_rating)
 
-    response = (
-        query
-        .order("trust_score", desc=True)
-        .limit(limit)
-        .execute()
-    )
+    response = query.order("trust_score", desc=True).limit(limit).execute()
 
     return response.data if response.data else []
 
@@ -831,6 +831,7 @@ async def search_workers(
 # ============================================
 # WORKER UNLOCKS
 # ============================================
+
 
 async def check_worker_unlock(worker_id: str, user_email: str) -> bool:
     """
@@ -858,7 +859,7 @@ async def create_worker_unlock(
     worker_id: str,
     user_email: str,
     payment_id: str | None = None,
-    unlock_price_idr: int = 50000
+    unlock_price_idr: int = 50000,
 ) -> dict:
     """
     Create a worker unlock record after successful payment.
@@ -873,12 +874,18 @@ async def create_worker_unlock(
         dict: Created unlock record
     """
     supabase = get_supabase_client()
-    response = supabase.table("worker_unlocks").insert({
-        "worker_id": worker_id,
-        "user_email": user_email,
-        "payment_id": payment_id,
-        "unlock_price_idr": unlock_price_idr
-    }).execute()
+    response = (
+        supabase.table("worker_unlocks")
+        .insert(
+            {
+                "worker_id": worker_id,
+                "user_email": user_email,
+                "payment_id": payment_id,
+                "unlock_price_idr": unlock_price_idr,
+            }
+        )
+        .execute()
+    )
     return response.data[0] if response.data else {}
 
 
@@ -907,6 +914,7 @@ async def get_user_unlocked_workers(user_email: str) -> list[dict]:
 # PAYMENTS (formerly "transactions")
 # ============================================
 
+
 async def save_payment(payment_data: dict) -> dict:
     """
     Save payment record
@@ -933,9 +941,7 @@ async def get_payment(payment_id: str) -> dict | None:
         dict | None: Payment data or None
     """
     supabase = get_supabase_client()
-    response = (
-        supabase.table("payments").select("*").eq("id", payment_id).execute()
-    )
+    response = supabase.table("payments").select("*").eq("id", payment_id).execute()
     return response.data[0] if response.data else None
 
 
@@ -959,11 +965,7 @@ async def get_payment_by_gateway_id(gateway_transaction_id: str) -> dict | None:
     return response.data[0] if response.data else None
 
 
-async def update_payment_status(
-    payment_id: str,
-    status: str,
-    **kwargs
-) -> None:
+async def update_payment_status(payment_id: str, status: str, **kwargs) -> None:
     """
     Update payment status
 
@@ -981,11 +983,9 @@ async def update_payment_status(
 # AFFILIATE CLICKS
 # ============================================
 
+
 async def track_affiliate_click(
-    project_id: str,
-    material_id: str,
-    platform: str,
-    user_session: str
+    project_id: str, material_id: str, platform: str, user_session: str
 ) -> dict:
     """
     Track affiliate link click
@@ -1000,19 +1000,23 @@ async def track_affiliate_click(
         dict: Created click record
     """
     supabase = get_supabase_client()
-    response = supabase.table("affiliate_clicks").insert({
-        "project_id": project_id,
-        "material_id": material_id,
-        "platform": platform,
-        "user_session": user_session
-    }).execute()
+    response = (
+        supabase.table("affiliate_clicks")
+        .insert(
+            {
+                "project_id": project_id,
+                "material_id": material_id,
+                "platform": platform,
+                "user_session": user_session,
+            }
+        )
+        .execute()
+    )
     return response.data[0] if response.data else {}
 
 
 async def update_affiliate_conversion(
-    click_id: str,
-    conversion_amount: float,
-    commission_earned: float
+    click_id: str, conversion_amount: float, commission_earned: float
 ) -> None:
     """
     Update affiliate click with conversion data
@@ -1023,22 +1027,23 @@ async def update_affiliate_conversion(
         commission_earned: Commission from affiliate program
     """
     supabase = get_supabase_client()
-    supabase.table("affiliate_clicks").update({
-        "converted": True,
-        "conversion_amount": conversion_amount,
-        "commission_earned": commission_earned,
-        "converted_at": "now()"
-    }).eq("id", click_id).execute()
+    supabase.table("affiliate_clicks").update(
+        {
+            "converted": True,
+            "conversion_amount": conversion_amount,
+            "commission_earned": commission_earned,
+            "converted_at": "now()",
+        }
+    ).eq("id", click_id).execute()
 
 
 # ============================================
 # SCRAPE JOBS
 # ============================================
 
+
 async def create_scrape_job(
-    job_type: str,
-    input_params: dict,
-    apify_actor_id: str | None = None
+    job_type: str, input_params: dict, apify_actor_id: str | None = None
 ) -> dict:
     """
     Create a new scrape job record
@@ -1052,12 +1057,18 @@ async def create_scrape_job(
         dict: Created job record
     """
     supabase = get_supabase_client()
-    response = supabase.table("scrape_jobs").insert({
-        "job_type": job_type,
-        "input_params": input_params,
-        "apify_actor_id": apify_actor_id,
-        "status": "pending"
-    }).execute()
+    response = (
+        supabase.table("scrape_jobs")
+        .insert(
+            {
+                "job_type": job_type,
+                "input_params": input_params,
+                "apify_actor_id": apify_actor_id,
+                "status": "pending",
+            }
+        )
+        .execute()
+    )
     return response.data[0] if response.data else {}
 
 
@@ -1086,22 +1097,16 @@ async def save_scrape_job(
         "_meta": {
             "estimated_cost_usd": estimated_cost_usd,
             "created_by": "google_maps_scraper",
-        }
+        },
     }
 
     job = await create_scrape_job(
-        job_type=job_type,
-        input_params=enhanced_params,
-        apify_actor_id=apify_actor_id
+        job_type=job_type, input_params=enhanced_params, apify_actor_id=apify_actor_id
     )
     return job["id"]
 
 
-async def update_scrape_job(
-    job_id: str,
-    status: str,
-    **kwargs
-) -> None:
+async def update_scrape_job(job_id: str, status: str, **kwargs) -> None:
     """
     Update scrape job status
 
@@ -1153,7 +1158,11 @@ async def update_scrape_job_status(
         update_data["items_scraped"] = results_count
 
     # Store cost and output metadata in errors field (JSONB)
-    if actual_cost_usd is not None or output_data is not None or error_message is not None:
+    if (
+        actual_cost_usd is not None
+        or output_data is not None
+        or error_message is not None
+    ):
         metadata = {}
         if actual_cost_usd is not None:
             metadata["actual_cost_usd"] = actual_cost_usd
@@ -1163,6 +1172,6 @@ async def update_scrape_job_status(
             metadata["error"] = error_message
         update_data["errors"] = metadata
 
-    await update_scrape_job(job_id, status, **{k: v for k, v in update_data.items() if k != "status"})
-
-
+    await update_scrape_job(
+        job_id, status, **{k: v for k, v in update_data.items() if k != "status"}
+    )

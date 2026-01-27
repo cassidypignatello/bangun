@@ -19,6 +19,7 @@ from app.utils.resilience import with_circuit_breaker
 # Product Quality Scoring
 # =============================================================================
 
+
 @dataclass
 class ProductScore:
     """Quality score breakdown for a product listing."""
@@ -45,9 +46,9 @@ class BestSellerScore:
 
     product: dict
     total_score: float
-    rating_score: float     # Higher rating = higher score (0.4 weight)
-    sales_score: float      # Higher sales = higher score (0.4 weight)
-    price_score: float      # Lower price = higher score (0.2 weight)
+    rating_score: float  # Higher rating = higher score (0.4 weight)
+    sales_score: float  # Higher sales = higher score (0.4 weight)
+    price_score: float  # Lower price = higher score (0.2 weight)
 
 
 def score_best_seller(product: dict, min_price: int, max_price: int) -> BestSellerScore:
@@ -78,6 +79,7 @@ def score_best_seller(product: dict, min_price: int, max_price: int) -> BestSell
     # Get min/max sales from products for normalization (calculated in rank_best_sellers)
     # For now, use logarithmic scale capped at 10k as fallback
     import math
+
     if sold <= 0:
         sales_score = 0.0
     elif sold >= 10000:
@@ -97,11 +99,7 @@ def score_best_seller(product: dict, min_price: int, max_price: int) -> BestSell
         price_score = 0.0
 
     # Weighted total: Rating 40% + Sales 40% + Price 20%
-    total = (
-        (rating_score * 0.4) +
-        (sales_score * 0.4) +
-        (price_score * 0.2)
-    )
+    total = (rating_score * 0.4) + (sales_score * 0.4) + (price_score * 0.2)
 
     return BestSellerScore(
         product=product,
@@ -196,8 +194,7 @@ def rank_best_sellers(
 
     # Score only products with valid prices
     products_with_price = [
-        p for p in available_products
-        if (p.get("price_idr", 0) or 0) > 0
+        p for p in available_products if (p.get("price_idr", 0) or 0) > 0
     ]
     scored = [score_best_seller(p, min_price, max_price) for p in products_with_price]
 
@@ -783,7 +780,9 @@ async def scrape_tokopedia_prices(
                 {
                     "name": db_cache.get("name_id", material_name),
                     "price_idr": int(db_cache.get("price_avg", 0)),  # Average price
-                    "url": "",  # Not stored in cache
+                    "url": db_cache.get(
+                        "tokopedia_affiliate_url", ""
+                    ),  # Product URL from cache
                     "seller": "Cached Price",
                     "rating": 0.0,
                     "sold_count": 0,
@@ -939,7 +938,9 @@ async def get_best_material_price(
     # =========================================================================
     cached_best = await price_scrape_cache.get(cache_key)
     if cached_best is not None:
-        print(f"  💾 CACHE HIT [Tier 1 Memory]: {material_name} → Rp {cached_best.get('price_idr', 0):,}")
+        print(
+            f"  💾 CACHE HIT [Tier 1 Memory]: {material_name} → Rp {cached_best.get('price_idr', 0):,}"
+        )
         return cached_best
 
     # =========================================================================
@@ -948,7 +949,9 @@ async def get_best_material_price(
     try:
         db_cache = await get_cached_material_price(material_name)
         if db_cache and db_cache.get("is_fresh") and db_cache.get("price_avg"):
-            print(f"  💾 CACHE HIT [Tier 2 Database]: {material_name} → Rp {db_cache.get('price_avg', 0):,}")
+            print(
+                f"  💾 CACHE HIT [Tier 2 Database]: {material_name} → Rp {db_cache.get('price_avg', 0):,}"
+            )
             # Return cached best seller data
             cached_result = {
                 "name": db_cache.get("name_id", material_name),
@@ -1137,7 +1140,9 @@ def get_best_price(products: list[dict], required_quantity: float = None) -> dic
     products_to_score = available_products if available_products else products
 
     # Filter to quality products
-    quality_products = filter_quality_products(products_to_score, min_score=0.3, top_n=5)
+    quality_products = filter_quality_products(
+        products_to_score, min_score=0.3, top_n=5
+    )
 
     if not quality_products:
         # Fallback to raw median if no quality products
