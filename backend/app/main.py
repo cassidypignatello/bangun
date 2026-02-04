@@ -14,7 +14,7 @@ from slowapi.util import get_remote_address
 from app.config import get_settings
 from app.middleware.error_handler import add_error_handlers
 from app.middleware.timeout import TimeoutMiddleware
-from app.routes import estimates, health, materials, payments, workers, workers_search
+from app.routes import boq, estimates, health, materials, payments, workers, workers_search
 from app.services.background_jobs import start_background_jobs, stop_background_jobs
 
 settings = get_settings()
@@ -90,6 +90,7 @@ api_v1_router.include_router(workers_search.router, tags=["Workers"])  # New sea
 api_v1_router.include_router(workers.router, prefix="/workers", tags=["Workers"])  # Legacy endpoints
 api_v1_router.include_router(payments.router, prefix="", tags=["Payments"])
 api_v1_router.include_router(materials.router, prefix="/materials", tags=["Materials"])
+api_v1_router.include_router(boq.router, tags=["BoQ Analysis"])
 
 # Mount the API v1 router
 app.include_router(api_v1_router)
