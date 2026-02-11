@@ -29,7 +29,7 @@ export default function Home() {
             </div>
             <p className="text-gray-600 mb-6">
               Got a contractor quote? Upload your Bill of Quantity (PDF or Excel) and we&apos;ll
-              verify their pricing against real-time market rates from Tokopedia.
+              verify their pricing against real-time market rates.
             </p>
             <BoQUpload />
           </div>

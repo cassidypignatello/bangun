@@ -109,7 +109,7 @@ class BoQApi {
     }
 
     try {
-      const response = await fetch(`${this.baseURL}/api/v1/boq/upload`, {
+      const response = await fetch(`${this.baseURL}/boq/upload`, {
         method: 'POST',
         headers,
         body: formData,
@@ -144,7 +144,7 @@ class BoQApi {
    */
   async getStatus(jobId: string): Promise<ApiResponse<BoQJobStatusResponse>> {
     try {
-      const response = await fetch(`${this.baseURL}/api/v1/boq/${jobId}/status`);
+      const response = await fetch(`${this.baseURL}/boq/${jobId}/status`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -174,7 +174,7 @@ class BoQApi {
    */
   async getResults(jobId: string): Promise<ApiResponse<BoQAnalysisResults>> {
     try {
-      const response = await fetch(`${this.baseURL}/api/v1/boq/${jobId}/results`);
+      const response = await fetch(`${this.baseURL}/boq/${jobId}/results`);
       const data = await response.json();
 
       if (!response.ok) {
