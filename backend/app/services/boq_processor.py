@@ -49,6 +49,9 @@ LABOR_INDICATORS = [
     "plaster",       # plastering (labor)
     "aci ",          # finishing coat (labor)
     "cat ",          # painting (labor-heavy)
+    "perataan",      # leveling/grading (earthwork labor)
+    "persiapan",     # preparation work
+    "rabatan",       # screed/leveling work
 ]
 
 MATERIAL_INDICATORS = [
@@ -245,9 +248,24 @@ def _extract_from_pdf_sync(file_content: bytes, filename: str) -> ExtractedBoQDa
         logger.error("pdf_to_images_failed", error=str(e))
         return ExtractedBoQData(extraction_warnings=[f"PDF conversion failed: {str(e)}"])
 
-    extraction_prompt = """Analyze these pages from an Indonesian construction BoQ document.
-Extract ALL line items into JSON format with: section, item_number, description, unit, quantity, contractor_unit_price, contractor_total, item_type (material/labor/equipment/unknown), is_owner_supply, is_existing.
-Return: {"project_name": "...", "contractor_name": "...", "items": [...], "extraction_warnings": [...]}"""
+    extraction_prompt = """Analyze these pages from an Indonesian construction BoQ (Bill of Quantity / Rencana Anggaran Biaya) document.
+
+Extract ALL line items into a structured JSON format. Pay attention to:
+1. Section headers (e.g., "PEKERJAAN BONGKARAN", "PEKERJAAN KERAMIK")
+2. Each line item with: description, unit (SAT), quantity (VOL), unit price (HARGA SATUAN), total (HARGA)
+3. Items marked "(Suply By Owner)" or "(Supply By Owner)" - set is_owner_supply: true
+4. Items marked "(use existing)" or "(existing)" - set is_existing: true
+
+Classify each item_type using EXACTLY one of these lowercase values:
+- "material": Physical materials being supplied (granit, keramik, pipa, kabel, pintu, jendela, kusen, batu alam, cat, waterproofing)
+- "labor": Work/service items (bongkar, instalasi, pasang, pek./pekerjaan, plaster, aci, pengecatan, cleaning, perbaikan, pembuangan). Section "PEKERJAAN BONGKARAN" items are always labor. "Pek." prefix items are labor.
+- "equipment": Standalone installed equipment (pompa, AC unit, water heater, filter)
+- "unknown": Only if truly cannot determine
+
+Return JSON: {"project_name": "...", "contractor_name": "...", "project_location": "...", "items": [...], "extraction_warnings": [...]}
+Each item: {"section": "...", "item_number": "...", "description": "...", "unit": "...", "quantity": 0, "contractor_unit_price": 0, "contractor_total": 0, "item_type": "material", "is_owner_supply": false, "is_existing": false, "extraction_confidence": 0.9}
+
+Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Price, HARGA=Total Price, LS=Lump Sum, m2=square meters, m1=linear meters"""
 
     # Skip cover page, process in batches of 3
     pages_to_process = image_contents[1:] if len(image_contents) > 1 else image_contents
@@ -313,7 +331,7 @@ Return: {"project_name": "...", "contractor_name": "...", "items": [...], "extra
                     quantity=item_data.get("quantity"),
                     contractor_unit_price=item_data.get("contractor_unit_price"),
                     contractor_total=item_data.get("contractor_total"),
-                    item_type=BoQItemType(item_data.get("item_type", "unknown")),
+                    item_type=_normalize_item_type(item_data.get("item_type", "unknown"), item_data.get("description", "")),
                     is_owner_supply=item_data.get("is_owner_supply", False),
                     is_existing=item_data.get("is_existing", False),
                     extraction_confidence=item_data.get("extraction_confidence", 0.8),
@@ -691,11 +709,11 @@ Extract ALL line items into a structured JSON format. Pay attention to:
 3. Items marked "(Suply By Owner)" or "(Supply By Owner)" - set is_owner_supply: true
 4. Items marked "(use existing)" or "(existing)" - set is_existing: true
 
-Classify each item:
-- "material": Physical materials (granit, keramik, pipa, kabel, etc.)
-- "labor": Work/service items (bongkar, instalasi, pasang, cat, plaster)
-- "equipment": Installed equipment (pompa, AC unit, water heater)
-- "unknown": Cannot determine
+Classify each item_type using EXACTLY one of these lowercase values:
+- "material": Physical materials being supplied (granit, keramik, pipa, kabel, pintu, jendela, kusen, batu alam, cat, waterproofing)
+- "labor": Work/service items (bongkar, instalasi, pasang, pek./pekerjaan, plaster, aci, pengecatan, cleaning, perbaikan, pembuangan). Section "PEKERJAAN BONGKARAN" items are always labor. "Pek." prefix items are labor.
+- "equipment": Standalone installed equipment (pompa, AC unit, water heater, filter)
+- "unknown": Only if truly cannot determine
 
 Return JSON in this exact format:
 {
@@ -819,7 +837,7 @@ Be thorough - extract ALL items from ALL pages/sections. Indonesian terms:
                     quantity=item_data.get("quantity"),
                     contractor_unit_price=item_data.get("contractor_unit_price"),
                     contractor_total=item_data.get("contractor_total"),
-                    item_type=BoQItemType(item_data.get("item_type", "unknown")),
+                    item_type=_normalize_item_type(item_data.get("item_type", "unknown"), item_data.get("description", "")),
                     is_owner_supply=item_data.get("is_owner_supply", False),
                     is_existing=item_data.get("is_existing", False),
                     extraction_confidence=item_data.get("extraction_confidence", 0.8),
@@ -889,7 +907,7 @@ async def _extract_pages_individually(
                     quantity=item_data.get("quantity"),
                     contractor_unit_price=item_data.get("contractor_unit_price"),
                     contractor_total=item_data.get("contractor_total"),
-                    item_type=BoQItemType(item_data.get("item_type", "unknown")),
+                    item_type=_normalize_item_type(item_data.get("item_type", "unknown"), item_data.get("description", "")),
                     is_owner_supply=item_data.get("is_owner_supply", False),
                     is_existing=item_data.get("is_existing", False),
                     extraction_confidence=item_data.get("extraction_confidence", 0.8),
@@ -1070,11 +1088,55 @@ def _parse_number(value) -> Optional[float]:
     return None
 
 
+
+def _normalize_item_type(raw_value: str, description: str = "") -> BoQItemType:
+    """Normalize GPT's item_type response and fall back to rule-based classification.
+
+    GPT-4o sometimes returns 'unknown' for items that our rule-based classifier
+    can handle (e.g., 'bongkar' = labor, 'Pek.' = labor). This function:
+    1. Normalizes case/spelling variants from GPT
+    2. Falls back to _classify_item() when GPT returns 'unknown'
+    """
+    if not raw_value:
+        raw_value = "unknown"
+
+    normalized = raw_value.strip().lower()
+
+    # Map common GPT variants
+    variant_map = {
+        "materials": "material",
+        "labour": "labor",
+        "work": "labor",
+        "service": "labor",
+        "demolition": "labor",
+        "installation": "labor",
+        "supply": "material",
+        "tool": "equipment",
+        "tools": "equipment",
+        "machinery": "equipment",
+    }
+    normalized = variant_map.get(normalized, normalized)
+
+    # Try to match enum directly
+    try:
+        item_type = BoQItemType(normalized)
+    except ValueError:
+        item_type = BoQItemType.UNKNOWN
+
+    # When GPT says "unknown", use rule-based classifier as fallback
+    if item_type == BoQItemType.UNKNOWN and description:
+        classified = _classify_item(description)
+        if classified != BoQItemType.UNKNOWN:
+            item_type = classified
+
+    return item_type
+
 def _classify_item(description: str) -> BoQItemType:
     """Classify an item as material, labor, or equipment.
 
-    Priority: Labor prefixes (bongkar, instalasi) > Material names > Equipment
+    Priority: Labor prefixes (bongkar, instalasi, pas.) > Material names > Equipment
     This ensures "bongkar pintu" is labor, not material.
+    "Pas. Downlight" is labor (installation work), not material.
     """
     desc_lower = description.lower()
 
@@ -1083,13 +1145,17 @@ def _classify_item(description: str) -> BoQItemType:
     labor_action_prefixes = [
         "bongkar",       # demolition/removal
         "instalasi",     # installation (labor)
-        "pasang ",       # mounting (labor, not Pas. for tile)
+        "pas.",          # pasang (mounting/installation, abbreviated)
+        "pas ",          # pasang (mounting/installation)
+        "pasang ",       # mounting (labor)
         "pek.",          # pekerjaan (work)
         "pek ",
         "perbaikan",     # repair
         "pengecatan",    # painting work
         "pembuangan",    # disposal
         "cleaning",      # cleaning
+        "perataan",      # leveling/grading
+        "tarikan",       # cable pulling (labor)
     ]
 
     # Check for labor-action prefixes first (highest priority)
