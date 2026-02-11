@@ -56,6 +56,8 @@ class Settings(BaseSettings):
 
     # Development/Testing Options
     use_mock_prices: bool = False  # Set to True to skip Apify and use mock price data
+    boq_dry_run: bool = False  # Set to True to skip OpenAI calls and return mock extraction data
+    boq_max_pages: int = 10  # Max PDF pages to process (lower for cheaper testing)
 
     model_config = SettingsConfigDict(
         env_file=".env",

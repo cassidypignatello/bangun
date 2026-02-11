@@ -4,6 +4,7 @@ Includes Sentry monitoring, CORS, rate limiting, error handling, and background 
 """
 
 import sentry_sdk
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +20,11 @@ from app.services.background_jobs import start_background_jobs, stop_background_
 
 settings = get_settings()
 
+# Global executor for CPU-bound/long-running background tasks
+# ProcessPoolExecutor provides true process isolation, avoiding event loop conflicts
+# that occur when using BackgroundTasks with httpx/OpenAI clients
+boq_executor: ProcessPoolExecutor = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -27,15 +33,22 @@ async def lifespan(app: FastAPI):
 
     Startup:
     - Start background job scheduler (if enabled)
+    - Initialize ProcessPoolExecutor for BoQ processing
 
     Shutdown:
     - Stop background job scheduler gracefully
+    - Shutdown ProcessPoolExecutor
     """
+    global boq_executor
     # Startup
     start_background_jobs()
+    # Initialize executor with 2 workers (BoQ processing is memory-intensive)
+    boq_executor = ProcessPoolExecutor(max_workers=2)
     yield
     # Shutdown
     stop_background_jobs()
+    if boq_executor:
+        boq_executor.shutdown(wait=True)
 
 # Initialize Sentry for error tracking
 if settings.sentry_dsn:

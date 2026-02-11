@@ -7,10 +7,11 @@ Endpoints:
 - GET /boq/{job_id}/results - Get analysis results
 """
 
+import asyncio
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Request, UploadFile, status
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile, status
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
@@ -21,7 +22,7 @@ from app.schemas.boq import (
     BoQJobStatusResponse,
     BoQUploadResponse,
 )
-from app.services.boq_processor import process_boq_job
+from app.services.boq_processor import process_boq_job_sync
 from app.integrations.supabase import get_supabase_client
 
 router = APIRouter(prefix="/boq", tags=["BoQ Analysis"])
@@ -80,7 +81,6 @@ def _get_session_id(request: Request) -> str:
 @limiter.limit(UPLOAD_LIMIT)
 async def upload_boq(
     request: Request,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="BoQ file (PDF or Excel)"),
 ):
     """
@@ -125,7 +125,7 @@ async def upload_boq(
 
     # Create job record in Supabase
     job_id = str(uuid.uuid4())
-    supabase = await get_supabase_client()
+    supabase = get_supabase_client()
 
     job_data = {
         "id": job_id,
@@ -145,13 +145,19 @@ async def upload_boq(
             detail="Failed to create job record",
         )
 
-    # Trigger background processing
-    background_tasks.add_task(
-        process_boq_job,
-        job_id=job_id,
-        file_content=content,
-        file_format=file_format,
-        filename=file.filename,
+    # Trigger background processing using ProcessPoolExecutor
+    # This runs in a completely separate process, avoiding event loop conflicts
+    # that occur with FastAPI's BackgroundTasks and httpx/OpenAI clients
+    from app.main import boq_executor
+
+    loop = asyncio.get_event_loop()
+    loop.run_in_executor(
+        boq_executor,
+        process_boq_job_sync,
+        job_id,
+        content,
+        file_format,
+        file.filename,
     )
 
     return BoQUploadResponse(
@@ -177,7 +183,7 @@ async def get_boq_status(request: Request, job_id: str):
     Returns:
         BoQJobStatusResponse: Current status and progress
     """
-    supabase = await get_supabase_client()
+    supabase = get_supabase_client()
 
     result = (
         supabase.table("boq_jobs")
@@ -242,7 +248,7 @@ async def get_boq_results(request: Request, job_id: str):
         404: Job not found
         409: Job not yet completed
     """
-    supabase = await get_supabase_client()
+    supabase = get_supabase_client()
 
     # Get job
     job_result = (
