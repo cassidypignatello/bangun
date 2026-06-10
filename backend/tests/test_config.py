@@ -68,3 +68,22 @@ class TestBoqExtractionModelSetting:
         monkeypatch.setenv("BOQ_EXTRACTION_MODEL", "gpt-4o-mini")
         settings = Settings(**REQUIRED_SETTINGS)
         assert settings.boq_extraction_model == "gpt-4o-mini"
+
+
+class TestMatchQualitySettings:
+    """Tests for marketplace match-quality gate settings"""
+
+    def test_min_confidence_default(self):
+        settings = Settings(**REQUIRED_SETTINGS)
+        assert settings.boq_match_min_confidence == 0.3
+
+    def test_max_price_ratio_default(self):
+        settings = Settings(**REQUIRED_SETTINGS)
+        assert settings.boq_match_max_price_ratio == 5.0
+
+    def test_overridable_via_env(self, monkeypatch):
+        monkeypatch.setenv("BOQ_MATCH_MIN_CONFIDENCE", "0.5")
+        monkeypatch.setenv("BOQ_MATCH_MAX_PRICE_RATIO", "3.0")
+        settings = Settings(**REQUIRED_SETTINGS)
+        assert settings.boq_match_min_confidence == 0.5
+        assert settings.boq_match_max_price_ratio == 3.0

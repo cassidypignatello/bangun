@@ -162,16 +162,28 @@ def _lookup_cache(
     return hits
 
 
-def _build_match_from_cache(item: dict, query: str, cache_row: dict) -> MaterialPriceMatch:
+def _build_match_from_cache(
+    item: dict,
+    query: str,
+    cache_row: dict,
+    max_price_ratio: float = 5.0,
+) -> MaterialPriceMatch:
     """
     Build a MaterialPriceMatch from a cached materials table row.
 
     Uses price_median as the market unit price for comparison.
 
+    Applies a price-sanity band gate: cached confidence is fixed at 0.85
+    (pre-verified by prior scrape), so only the band check applies. If the
+    cached market price lies outside [contractor/max_price_ratio,
+    contractor*max_price_ratio], the match is rejected and returned as a
+    no-result match (search_query kept, pricing fields None, from_cache=True).
+
     Args:
         item: BOQ item dict (must have 'contractor_unit_price', 'quantity').
         query: Normalized search query.
         cache_row: Row from the materials table.
+        max_price_ratio: Maximum ratio between market and contractor prices.
 
     Returns:
         MaterialPriceMatch with from_cache=True.
@@ -179,6 +191,30 @@ def _build_match_from_cache(item: dict, query: str, cache_row: dict) -> Material
     market_price = Decimal(str(cache_row.get("price_median", 0) or 0))
     contractor_price = Decimal(str(item.get("contractor_unit_price", 0) or 0))
     quantity = Decimal(str(item.get("quantity", 0) or 0))
+
+    # Price-sanity band gate for cache matches
+    if contractor_price > 0 and market_price > 0:
+        ratio = float(market_price / contractor_price)
+        if ratio > max_price_ratio or ratio < 1.0 / max_price_ratio:
+            logger.info(
+                "boq_match_rejected",
+                query=query,
+                reason="price_out_of_band",
+                confidence=0.85,
+                market_price=int(market_price),
+                contractor_price=int(contractor_price),
+                source="cache",
+            )
+            return MaterialPriceMatch(
+                search_query=query,
+                result=None,
+                match_confidence=0.0,
+                market_unit_price=None,
+                market_total=None,
+                price_difference=None,
+                price_difference_pct=None,
+                from_cache=True,
+            )
 
     market_total = market_price * quantity
 
@@ -330,6 +366,8 @@ def batch_price_materials(
     supabase_client,
     max_lookups: int = 20,
     progress_callback: Optional[Callable[[int], None]] = None,
+    min_confidence: float = 0.3,
+    max_price_ratio: float = 5.0,
 ) -> list[tuple[dict, MaterialPriceMatch]]:
     """
     Main pipeline entry point. Runs fully synchronously.
@@ -343,6 +381,8 @@ def batch_price_materials(
       6. Scrape marketplace only for cache misses.
       7. Write scrape results back to cache.
       8. For each result: rank candidates, pick best, calculate delta.
+      9. Apply quality gate: reject matches below min_confidence or outside
+         the price-sanity band [contractor/max_price_ratio, contractor*max_price_ratio].
 
     Args:
         items: BOQ item rows (dicts with at minimum 'description').
@@ -350,6 +390,8 @@ def batch_price_materials(
         supabase_client: Supabase client for cache lookups/writes.
         max_lookups: Maximum number of items to price in one run.
         progress_callback: Optional callback receiving progress percentage (40-85 range).
+        min_confidence: Minimum word-overlap confidence to accept a scrape match.
+        max_price_ratio: Maximum ratio between market and contractor unit prices.
 
     Returns:
         List of (item, MaterialPriceMatch) pairs, one per processed item,
@@ -401,7 +443,7 @@ def batch_price_materials(
     # --- Process cache hits (instant, 40% → 55%) ---
     for idx, (i, item) in enumerate(cached_items):
         cache_row = cache_hits[item["_cache_key"]]
-        matches[i] = _build_match_from_cache(item, item["_search_query"], cache_row)
+        matches[i] = _build_match_from_cache(item, item["_search_query"], cache_row, max_price_ratio=max_price_ratio)
 
         if progress_callback and total > 0:
             # Cache hits use the 40-55% range
@@ -423,7 +465,7 @@ def batch_price_materials(
             else:
                 best = None
 
-            matches[i] = _build_match_from_scrape(item, query, best)
+            matches[i] = _build_match_from_scrape(item, query, best, min_confidence=min_confidence, max_price_ratio=max_price_ratio)
 
             # Write to cache for next time
             if best is not None:
@@ -466,18 +508,39 @@ def batch_price_materials(
 # =============================================================================
 
 
-def _build_match_from_scrape(item: dict, query: str, best) -> MaterialPriceMatch:
+def _build_match_from_scrape(
+    item: dict,
+    query: str,
+    best,
+    min_confidence: float = 0.3,
+    max_price_ratio: float = 5.0,
+) -> MaterialPriceMatch:
     """
     Build a MaterialPriceMatch from a BOQ item and a ranking result.
+
+    Applies a two-part quality gate before building the match:
+      1. Confidence gate: word-overlap between query and product name must be
+         >= min_confidence (default 0.3). A pool fitting matching vacuum storage
+         bags scores 0.0 and is rejected.
+      2. Price-sanity band: when a contractor price is available, the market
+         price must lie within [contractor/max_price_ratio, contractor*max_price_ratio].
+         Matches outside this band (e.g. -12,100% price differences) are rejected.
+
+    Rejected matches are returned as no-result matches (search_query kept,
+    all pricing fields None, match_confidence=0.0) so they are recorded but
+    do not contribute to market totals or summary statistics.
 
     Args:
         item: BOQ item dict (must have 'contractor_unit_price', 'quantity').
         query: Normalized search query used.
         best: A BestSellerScore object (with .product dict and .total_score),
               or None if no results found.
+        min_confidence: Minimum word-overlap confidence required to accept match.
+        max_price_ratio: Maximum ratio between market and contractor prices.
 
     Returns:
-        MaterialPriceMatch with computed pricing deltas and confidence.
+        MaterialPriceMatch with computed pricing deltas and confidence,
+        or a no-result match if the quality gate rejects the candidate.
     """
     if best is None:
         return MaterialPriceMatch(
@@ -497,6 +560,42 @@ def _build_match_from_scrape(item: dict, query: str, best) -> MaterialPriceMatch
     contractor_price = Decimal(str(item.get("contractor_unit_price", 0) or 0))
     quantity = Decimal(str(item.get("quantity", 0) or 0))
 
+    # Match confidence via word overlap (computed before gate check)
+    search_words = set(query.lower().split())
+    product_name = product.get("name") or product.get("title") or ""
+    product_words = set(product_name.lower().split())
+    overlap = len(search_words & product_words)
+    confidence = overlap / max(len(search_words), 1)
+
+    # Quality gate
+    rejection = None
+    if confidence < min_confidence:
+        rejection = "low_confidence"
+    elif contractor_price > 0 and market_price > 0:
+        ratio = float(market_price / contractor_price)
+        if ratio > max_price_ratio or ratio < 1.0 / max_price_ratio:
+            rejection = "price_out_of_band"
+
+    if rejection is not None:
+        logger.info(
+            "boq_match_rejected",
+            query=query,
+            reason=rejection,
+            confidence=round(confidence, 2),
+            market_price=int(market_price),
+            contractor_price=int(contractor_price),
+        )
+        return MaterialPriceMatch(
+            search_query=query,
+            result=None,
+            match_confidence=0.0,
+            market_unit_price=None,
+            market_total=None,
+            price_difference=None,
+            price_difference_pct=None,
+            from_cache=False,
+        )
+
     market_total = market_price * quantity
 
     if contractor_price > 0:
@@ -505,13 +604,6 @@ def _build_match_from_scrape(item: dict, query: str, best) -> MaterialPriceMatch
     else:
         diff = Decimal("0")
         diff_pct = 0.0
-
-    # Match confidence via word overlap
-    search_words = set(query.lower().split())
-    product_name = product.get("name") or product.get("title") or ""
-    product_words = set(product_name.lower().split())
-    overlap = len(search_words & product_words)
-    confidence = overlap / max(len(search_words), 1)
 
     return MaterialPriceMatch(
         search_query=query,

@@ -245,6 +245,8 @@ def process_boq_job_sync(
                     supabase_client=supabase,
                     max_lookups=settings.boq_max_price_lookups,
                     progress_callback=on_progress,
+                    min_confidence=settings.boq_match_min_confidence,
+                    max_price_ratio=settings.boq_match_max_price_ratio,
                 )
 
                 persist_price_results(supabase, job_id, pairs)

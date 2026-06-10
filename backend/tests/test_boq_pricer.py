@@ -762,3 +762,78 @@ class TestPersistPriceResults:
 
         # Should not have called table() at all
         mock_supabase.table.assert_not_called()
+
+
+# =============================================================================
+# TestMatchQualityGate Tests
+# =============================================================================
+
+
+class TestMatchQualityGate:
+    """Matches failing confidence or price-sanity checks become no-result matches."""
+
+    def _run(self, items, products_by_query, **kwargs):
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = products_by_query
+
+        def mock_rank(results):
+            scored = []
+            for r in results:
+                s = MagicMock()
+                s.product = r
+                s.total_score = 0.8
+                scored.append(s)
+            return scored
+
+        provider.rank_results.side_effect = mock_rank
+        return batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(), **kwargs
+        )
+
+    def test_rejects_low_confidence_match(self):
+        """Zero word overlap between query and product name -> gated out."""
+        items = [{"id": "1", "description": "Vacum Cover Kolam", "quantity": 1,
+                  "contractor_unit_price": 120000}]
+        products = {"vacum cover kolam": [
+            {"name": "Plastik Penyimpanan Baju", "price_idr": 5500},
+        ]}
+        pairs = self._run(items, products)
+        item, match = pairs[0]
+        assert match.result is None
+        assert match.match_confidence == 0.0
+        assert match.market_unit_price is None
+
+    def test_rejects_price_outside_sanity_band(self):
+        """Market price >5x contractor price -> gated even with name overlap."""
+        items = [{"id": "1", "description": "Batako Anak Tangga", "quantity": 1,
+                  "contractor_unit_price": 105000}]
+        products = {"batako anak tangga": [
+            {"name": "Batako anak tangga premium", "price_idr": 4320000},
+        ]}
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is None
+
+    def test_accepts_reasonable_match(self):
+        # "Granit 60x60" normalizes to "granit 60x60" (no lantai/floor-number stripping)
+        items = [{"id": "1", "description": "Granit 60x60", "quantity": 2,
+                  "contractor_unit_price": 200000}]
+        products = {"granit 60x60": [
+            {"name": "Granit 60x60 Glossy", "price_idr": 150000},
+        ]}
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is not None
+        assert match.market_unit_price == Decimal("150000")
+
+    def test_no_price_band_check_when_contractor_price_missing(self):
+        """Without a contractor price there is no band; confidence alone decides."""
+        # "Granit 60x60" normalizes to "granit 60x60" (no lantai/floor-number stripping)
+        items = [{"id": "1", "description": "Granit 60x60", "quantity": 1,
+                  "contractor_unit_price": 0}]
+        products = {"granit 60x60": [
+            {"name": "Granit 60x60 Glossy", "price_idr": 150000},
+        ]}
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is not None
