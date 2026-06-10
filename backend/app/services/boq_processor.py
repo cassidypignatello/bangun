@@ -85,6 +85,21 @@ MATERIAL_INDICATORS = [
     "floor drain",
 ]
 
+# Application/treatment charges that GPT habitually labels as material.
+# These override GPT's label (unlike LABOR_INDICATORS, which only break ties
+# when GPT returns "unknown"). Keep this list narrow: every entry must be an
+# action billed per-area/per-unit, never a purchasable product name.
+STRONG_LABOR_OVERRIDES = [
+    "cat dinding",
+    "cat plafond",
+    "cat tembok",
+    "cat exterior",
+    "cat interior",
+    "refinishing",
+    "waterproofing",
+    "waterproof ",
+]
+
 OWNER_SUPPLY_PATTERNS = [
     r"suply\s*by\s*owner",
     r"supply\s*by\s*owner",
@@ -1312,19 +1327,28 @@ def _parse_number(value) -> Optional[float]:
 
 
 def _normalize_item_type(raw_value: str, description: str = "") -> BoQItemType:
-    """Normalize GPT's item_type response and fall back to rule-based classification.
+    """Normalize GPT's item_type response with override layer and fallback classification.
 
-    GPT-4o sometimes returns 'unknown' for items that our rule-based classifier
-    can handle (e.g., 'bongkar' = labor, 'Pek.' = labor). This function:
-    1. Normalizes case/spelling variants from GPT
-    2. Falls back to _classify_item() when GPT returns 'unknown'
+    Classification layers (in order):
+    0. Strong overrides: application charges (paint, waterproofing) override GPT's
+       "material" label when keywords appear in description (STRONG_LABOR_OVERRIDES).
+    1. Variant normalization: handle common GPT spelling variants (labour → labor, etc.).
+    2. Rule fallback: when GPT returns 'unknown', use rule-based classifier on description.
+
+    This ensures application charges (billed per-area, no product) are correctly
+    classified as labor even when GPT incorrectly says "material".
     """
+    # Layer 0: Check for strong labor overrides in description
+    desc_lower = (description or "").lower()
+    if any(kw in desc_lower for kw in STRONG_LABOR_OVERRIDES):
+        return BoQItemType.LABOR
+
     if not raw_value:
         raw_value = "unknown"
 
     normalized = raw_value.strip().lower()
 
-    # Map common GPT variants
+    # Layer 1: Map common GPT variants
     variant_map = {
         "materials": "material",
         "labour": "labor",
@@ -1345,7 +1369,7 @@ def _normalize_item_type(raw_value: str, description: str = "") -> BoQItemType:
     except ValueError:
         item_type = BoQItemType.UNKNOWN
 
-    # When GPT says "unknown", use rule-based classifier as fallback
+    # Layer 2: When GPT says "unknown", use rule-based classifier as fallback
     if item_type == BoQItemType.UNKNOWN and description:
         classified = _classify_item(description)
         if classified != BoQItemType.UNKNOWN:
