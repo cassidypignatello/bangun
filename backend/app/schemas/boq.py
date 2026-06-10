@@ -191,7 +191,10 @@ class BoQAnalysisResults(BaseModel):
         default_factory=list, description="Labor items (not priced)"
     )
 
-    extraction_warnings: list[str] = Field(default_factory=list)
+    extraction_warnings: list[str] = Field(
+        default_factory=list,
+        description="Extraction data-loss warnings (truncated batches, unreadable pages)",
+    )
 
     completed_at: Optional[datetime] = None
 

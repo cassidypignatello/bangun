@@ -576,7 +576,7 @@ def _update_job_status_sync(
         supabase.table("boq_jobs").update(update_data).eq("id", job_id).execute()
 
 
-def _save_job_metadata_sync(supabase, job_id: str, extracted) -> None:
+def _save_job_metadata_sync(supabase, job_id: str, extracted: ExtractedBoQData) -> None:
     """
     Persist extraction-level metadata (document header fields, item count,
     and any data-loss warnings) onto the job row.
@@ -1143,7 +1143,7 @@ async def _extract_pages_individually(
 
     return ExtractedBoQData(
         items=all_items,
-        extraction_warnings=warnings if warnings else None,
+        extraction_warnings=warnings,
     )
 
 

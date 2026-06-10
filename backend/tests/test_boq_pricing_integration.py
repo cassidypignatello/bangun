@@ -518,3 +518,31 @@ class TestExtractionWarningsPersisted:
         ]
         assert row["project_name"] == "P"
         assert row["total_items_extracted"] == 0
+
+    def test_results_schema_defaults_warnings_to_empty_list(self):
+        """BoQAnalysisResults tolerates pre-migration rows with no warnings key."""
+        from app.schemas.boq import (
+            BoQAnalysisResults,
+            BoQJobStatus,
+            BoQMetadata,
+            BoQSummary,
+        )
+
+        result = BoQAnalysisResults(
+            job_id="job-1",
+            status=BoQJobStatus.COMPLETED,
+            metadata=BoQMetadata(filename="boq.pdf"),
+            summary=BoQSummary(
+                contractor_total=Decimal("0"),
+                market_estimate=Decimal("0"),
+                potential_savings=Decimal("0"),
+                savings_percent=0.0,
+                total_items=0,
+                materials_count=0,
+                labor_count=0,
+                owner_supply_count=0,
+                priced_count=0,
+            ),
+        )
+
+        assert result.extraction_warnings == []
