@@ -102,6 +102,37 @@ EXISTING_PATTERNS = [
 
 
 # =============================================================================
+# Instrumentation Helpers
+# =============================================================================
+
+
+def _log_openai_usage(response, stage: str, **context) -> dict | None:
+    """
+    Extract token usage from an OpenAI response and emit a structured log line.
+
+    Used to make per-job OpenAI cost queryable from logs (Phase 1 cost model).
+
+    Args:
+        response: OpenAI chat completion response (any object with .usage).
+        stage: Label for which extraction path produced the call.
+        **context: Extra structured-log fields (batch number, page index).
+
+    Returns:
+        Dict with prompt/completion/total token counts, or None if absent.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+    usage_dict = {
+        "prompt_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+        "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
+        "total_tokens": getattr(usage, "total_tokens", 0) or 0,
+    }
+    logger.info("openai_token_usage", stage=stage, **context, **usage_dict)
+    return usage_dict
+
+
+# =============================================================================
 # Main Processing Function
 # =============================================================================
 
@@ -338,6 +369,7 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
                 response_format={"type": "json_object"},
             )
 
+            _log_openai_usage(response, stage="pdf_batch_sync", batch=batch_num)
             logger.info("gpt4o_batch_response", batch=batch_num)
 
             choice = response.choices[0]
@@ -847,6 +879,7 @@ Be thorough - extract ALL items from ALL pages/sections. Indonesian terms:
                 temperature=0.1,
                 response_format={"type": "json_object"},
             )
+            _log_openai_usage(response, stage="pdf_batch_async", batch=batch_num)
             logger.info("gpt4o_api_call_returned", batch=batch_num)
 
             # Check for refusal
@@ -942,6 +975,7 @@ async def _extract_pages_individually(
                     response_format={"type": "json_object"},
                 )
             )
+            _log_openai_usage(response, stage="pdf_page_individual", page=idx)
 
             choice = response.choices[0]
             refusal = getattr(choice.message, 'refusal', None)
