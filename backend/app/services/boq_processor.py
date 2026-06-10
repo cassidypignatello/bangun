@@ -126,6 +126,11 @@ def _model_kwargs(model: str, token_limit: int) -> dict:
     return {"max_tokens": token_limit, "temperature": 0.1}
 
 
+def _is_truncated(choice) -> bool:
+    """True when the completion stopped because it hit the output-token cap."""
+    return getattr(choice, "finish_reason", None) == "length"
+
+
 def _log_openai_usage(response, stage: str, **context) -> Optional[dict]:
     """
     Extract token usage from an OpenAI response and emit a structured log line.
@@ -389,7 +394,7 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
             response = client.chat.completions.create(
                 model=extraction_model,
                 messages=[{"role": "user", "content": content}],
-                **_model_kwargs(extraction_model, 8000),
+                **_model_kwargs(extraction_model, 16000),
                 response_format={"type": "json_object"},
             )
 
@@ -404,6 +409,9 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
 
             if not choice.message.content:
                 continue
+
+            if _is_truncated(choice):
+                logger.warning("gpt4o_batch_truncated", batch=batch_num)
 
             data = json.loads(choice.message.content)
 
@@ -431,6 +439,18 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
                     extraction_confidence=item_data.get("extraction_confidence", 0.8),
                 ))
 
+        except json.JSONDecodeError as e:
+            logger.error("gpt4o_batch_failed", batch=batch_num, error=str(e), error_type="JSONDecodeError")
+            extraction_warnings.append(
+                f"Batch {batch_num} truncated/unparseable; recovered page-by-page"
+            )
+            fb_items, fb_warnings = _extract_pages_individually_sync(
+                client, batch_pages, extraction_prompt, extraction_model
+            )
+            all_items.extend(fb_items)
+            extraction_warnings.extend(fb_warnings)
+            continue
+
         except Exception as e:
             error_msg = str(e)
             error_type = type(e).__name__
@@ -455,6 +475,56 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
         items=all_items,
         extraction_warnings=extraction_warnings,
     )
+
+
+def _extract_pages_individually_sync(
+    client, batch_pages: list, prompt: str, extraction_model: str
+) -> tuple[list, list]:
+    """
+    Recover a failed batch by extracting its pages one at a time.
+
+    Per-page outputs are small enough that they cannot hit the output-token
+    cap, so this trades extra API calls for completeness.
+
+    Args:
+        client: OpenAI client.
+        batch_pages: Image-content dicts for the failed batch's pages.
+        prompt: The extraction prompt used for batches.
+        extraction_model: Model name for the calls.
+
+    Returns:
+        (items, warnings) — raw item dicts and warning strings.
+    """
+    import json
+
+    items: list = []
+    warnings: list = []
+
+    for idx, img_content in enumerate(batch_pages):
+        try:
+            response = client.chat.completions.create(
+                model=extraction_model,
+                messages=[{
+                    "role": "user",
+                    "content": [{"type": "text", "text": prompt}, img_content],
+                }],
+                response_format={"type": "json_object"},
+                **_model_kwargs(extraction_model, 4000),
+            )
+            _log_openai_usage(response, stage="pdf_page_fallback_sync", page=idx)
+
+            choice = response.choices[0]
+            if getattr(choice.message, "refusal", None) or not choice.message.content:
+                warnings.append(f"Fallback page {idx} returned no content")
+                continue
+
+            data = json.loads(choice.message.content)
+            items.extend(data.get("items", []))
+        except Exception as e:
+            warnings.append(f"Fallback page {idx} failed: {e}")
+            logger.warning("pdf_page_fallback_failed", page=idx, error=str(e))
+
+    return items, warnings
 
 
 def _update_job_status_sync(
@@ -899,7 +969,7 @@ Be thorough - extract ALL items from ALL pages/sections. Indonesian terms:
             response = await client.chat.completions.create(
                 model=extraction_model,
                 messages=[{"role": "user", "content": content}],
-                **_model_kwargs(extraction_model, 8000),
+                **_model_kwargs(extraction_model, 16000),
                 response_format={"type": "json_object"},
             )
             _log_openai_usage(response, stage="pdf_batch_async", batch=batch_num)

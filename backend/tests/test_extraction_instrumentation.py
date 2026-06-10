@@ -57,3 +57,61 @@ class TestModelKwargs:
         from app.services.boq_processor import _model_kwargs
 
         assert "max_completion_tokens" in _model_kwargs("gpt-5.4", 4000)
+
+
+class TestBatchTruncationDetection:
+    def test_detects_length_finish_reason(self):
+        from app.services.boq_processor import _is_truncated
+
+        choice = SimpleNamespace(finish_reason="length")
+        assert _is_truncated(choice) is True
+
+    def test_normal_stop_is_not_truncated(self):
+        from app.services.boq_processor import _is_truncated
+
+        assert _is_truncated(SimpleNamespace(finish_reason="stop")) is False
+        assert _is_truncated(SimpleNamespace(finish_reason=None)) is False
+
+
+class TestExtractPagesIndividuallySync:
+    def test_collects_items_across_pages(self):
+        import json as _json
+        from unittest.mock import MagicMock
+        from app.services.boq_processor import _extract_pages_individually_sync
+
+        def page_response(items):
+            return SimpleNamespace(
+                usage=None,
+                choices=[SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(refusal=None, content=_json.dumps({"items": items})),
+                )],
+            )
+
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            page_response([{"description": "A"}]),
+            page_response([{"description": "B"}, {"description": "C"}]),
+        ]
+
+        items, warnings = _extract_pages_individually_sync(
+            client, [{"type": "image_url"}, {"type": "image_url"}], "prompt", "gpt-4o"
+        )
+
+        assert [i["description"] for i in items] == ["A", "B", "C"]
+        assert warnings == []
+
+    def test_page_failure_recorded_not_raised(self):
+        from unittest.mock import MagicMock
+        from app.services.boq_processor import _extract_pages_individually_sync
+
+        client = MagicMock()
+        client.chat.completions.create.side_effect = Exception("API down")
+
+        items, warnings = _extract_pages_individually_sync(
+            client, [{"type": "image_url"}], "prompt", "gpt-4o"
+        )
+
+        assert items == []
+        assert len(warnings) == 1
+        assert "failed" in warnings[0]
