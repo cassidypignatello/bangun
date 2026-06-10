@@ -545,3 +545,87 @@ class TestMockMarketplaceProvider:
 
         assert set(results.keys()) == set(queries)
         assert all(len(v) == 1 for v in results.values())
+
+
+class TestGetRunDatasetId:
+    """Tests for get_run_dataset_id (apify-client v2 dict vs v3 Run model compatibility)"""
+
+    def test_extracts_from_v2_dict(self):
+        """apify-client < 3 returned a dict with camelCase keys"""
+        from app.integrations.apify import get_run_dataset_id
+
+        assert get_run_dataset_id({"defaultDatasetId": "ds-123"}) == "ds-123"
+
+    def test_extracts_from_v3_run_model(self):
+        """apify-client >= 3 returns a Run model with snake_case attributes"""
+        from types import SimpleNamespace
+        from app.integrations.apify import get_run_dataset_id
+
+        run = SimpleNamespace(default_dataset_id="ds-456")
+        assert get_run_dataset_id(run) == "ds-456"
+
+    def test_returns_none_for_none_run(self):
+        """call() can return None in apify-client >= 3"""
+        from app.integrations.apify import get_run_dataset_id
+
+        assert get_run_dataset_id(None) is None
+
+    def test_returns_none_for_missing_id(self):
+        from types import SimpleNamespace
+        from app.integrations.apify import get_run_dataset_id
+
+        assert get_run_dataset_id({}) is None
+        assert get_run_dataset_id(SimpleNamespace()) is None
+
+
+class TestTokopediaProviderV3RunModel:
+    """TokopediaProvider must work with apify-client v3 Run objects"""
+
+    def test_search_sync_with_run_model(self):
+        """search_sync resolves the dataset id from a v3 Run model"""
+        from types import SimpleNamespace
+        from app.integrations.marketplace import TokopediaProvider
+
+        mock_client = MagicMock()
+        with patch("app.integrations.marketplace.ApifyClient", return_value=mock_client):
+            provider = TokopediaProvider(apify_token="test_token")
+
+        run_model = SimpleNamespace(default_dataset_id="ds-v3")
+        mock_client.actor.return_value.call.return_value = run_model
+        mock_client.dataset.return_value.iterate_items.return_value = iter(
+            [{"name": "Granit", "price_idr": 100000}]
+        )
+
+        results = provider.search_sync("granit 60x60")
+
+        mock_client.dataset.assert_called_once_with("ds-v3")
+        assert len(results) == 1
+
+    def test_search_sync_returns_empty_when_run_is_none(self):
+        """A None run (failed actor start) yields no results instead of crashing"""
+        from app.integrations.marketplace import TokopediaProvider
+
+        mock_client = MagicMock()
+        with patch("app.integrations.marketplace.ApifyClient", return_value=mock_client):
+            provider = TokopediaProvider(apify_token="test_token")
+
+        mock_client.actor.return_value.call.return_value = None
+
+        results = provider.search_sync("granit 60x60")
+
+        assert results == []
+        mock_client.dataset.assert_not_called()
+
+    def test_batch_search_skips_batch_when_run_is_none(self):
+        """batch_search_sync tolerates a None run for one batch"""
+        from app.integrations.marketplace import TokopediaProvider
+
+        mock_client = MagicMock()
+        with patch("app.integrations.marketplace.ApifyClient", return_value=mock_client):
+            provider = TokopediaProvider(apify_token="test_token")
+
+        mock_client.actor.return_value.call.return_value = None
+
+        results = provider.batch_search_sync(["granit", "semen"])
+
+        assert results == {"granit": [], "semen": []}

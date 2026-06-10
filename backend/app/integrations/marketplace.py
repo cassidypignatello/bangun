@@ -21,9 +21,12 @@ from enum import Enum
 from itertools import islice
 from typing import Iterator
 
+import structlog
 from apify_client import ApifyClient
 
-from app.integrations.apify import rank_best_sellers
+from app.integrations.apify import get_run_dataset_id, rank_best_sellers
+
+logger = structlog.get_logger()
 
 
 # =============================================================================
@@ -214,7 +217,11 @@ class TokopediaProvider(MarketplaceProvider):
         }
 
         run = self._client.actor(self.ACTOR_ID).call(run_input=run_input)
-        items = list(self._client.dataset(run["defaultDatasetId"]).iterate_items())
+        dataset_id = get_run_dataset_id(run)
+        if not dataset_id:
+            logger.warning("marketplace_run_no_dataset", query=query)
+            return []
+        items = list(self._client.dataset(dataset_id).iterate_items())
         return items
 
     def rank_results(self, results: list[dict]) -> list:
@@ -263,8 +270,12 @@ class TokopediaProvider(MarketplaceProvider):
             }
 
             run = self._client.actor(self.ACTOR_ID).call(run_input=run_input)
+            dataset_id = get_run_dataset_id(run)
+            if not dataset_id:
+                logger.warning("marketplace_run_no_dataset", queries=batch_list)
+                continue
             items = list(
-                self._client.dataset(run["defaultDatasetId"]).iterate_items()
+                self._client.dataset(dataset_id).iterate_items()
             )
 
             self._assign_results_to_queries(batch_list, items, output)

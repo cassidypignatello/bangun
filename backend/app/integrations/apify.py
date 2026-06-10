@@ -7,6 +7,7 @@ Designed for future multi-source aggregation (Shopee, local stores, etc.)
 
 from dataclasses import dataclass
 from functools import lru_cache
+from typing import Optional
 
 from apify_client import ApifyClient
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -312,6 +313,26 @@ def get_apify_client() -> ApifyClient:
     """
     settings = get_settings()
     return ApifyClient(settings.apify_token)
+
+
+def get_run_dataset_id(run) -> Optional[str]:
+    """
+    Get the default dataset id from an actor run result.
+
+    apify-client < 3 returned a dict with camelCase keys; >= 3 returns a
+    Run model with snake_case attributes (and call() may return None).
+
+    Args:
+        run: Return value of ActorClient.call() — dict, Run model, or None.
+
+    Returns:
+        Dataset id string, or None if the run is missing one.
+    """
+    if run is None:
+        return None
+    if isinstance(run, dict):
+        return run.get("defaultDatasetId")
+    return getattr(run, "default_dataset_id", None)
 
 
 # =============================================================================
@@ -822,9 +843,13 @@ async def scrape_tokopedia_prices(
         # Switched from 123webdata ($5/1k) for 70% cost reduction
         run = client.actor("fatihtahta/tokopedia-scraper").call(run_input=run_input)
 
+        dataset_id = get_run_dataset_id(run)
+        if not dataset_id:
+            raise ValueError("Apify actor run returned no dataset id")
+
         # Fetch results from dataset
         results = []
-        for item in client.dataset(run["defaultDatasetId"]).iterate_items():
+        for item in client.dataset(dataset_id).iterate_items():
             # Extract price - supports multiple Tokopedia actor formats
             price_idr = _extract_price(item)
 
