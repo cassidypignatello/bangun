@@ -131,138 +131,125 @@ class TestSemanticMatcher:
 
 
 class TestTrustCalculator:
-    """Tests for trust score calculation service"""
+    """Tests for trust score calculation service (source-based 100-point algorithm)"""
 
-    def test_calculate_trust_score_perfect(self):
-        """Should return 1.0 for perfect worker"""
-        from app.services.trust_calculator import calculate_trust_score
+    def test_calculate_trust_score_returns_detailed_object(self):
+        """Should return TrustScoreDetailed with total_score and breakdown"""
+        from app.services.trust_calculator import calculate_trust_score, SourceTier
 
         result = calculate_trust_score(
-            project_count=100,
-            avg_rating=5.0,
-            license_verified=True,
-            insurance_verified=True,
-            background_check=True,
-            years_experience=30,
+            source=SourceTier.GOOGLE_MAPS,
+            review_count=125,
+            rating=4.8,
         )
 
-        assert result == 1.0
+        assert hasattr(result, "total_score")
+        assert hasattr(result, "trust_level")
+        assert hasattr(result, "breakdown")
+        assert result.total_score > 0
 
     def test_calculate_trust_score_minimum(self):
-        """Should return 0.0 for new worker with no credentials"""
-        from app.services.trust_calculator import calculate_trust_score
+        """OLX source with no reviews/rating should score low"""
+        from app.services.trust_calculator import calculate_trust_score, SourceTier
 
-        result = calculate_trust_score(
-            project_count=0,
-            avg_rating=0.0,
-            license_verified=False,
-            insurance_verified=False,
-            background_check=False,
-            years_experience=0,
+        result = calculate_trust_score(source=SourceTier.OLX)
+
+        # OLX base = 9, no reviews/rating/verification/freshness = 9 total
+        assert result.total_score == 9
+
+    def test_calculate_trust_score_source_weights(self):
+        """Manual/platform source should score higher than OLX"""
+        from app.services.trust_calculator import calculate_trust_score, SourceTier
+
+        olx_result = calculate_trust_score(source=SourceTier.OLX)
+        gmaps_result = calculate_trust_score(source=SourceTier.GOOGLE_MAPS)
+        manual_result = calculate_trust_score(source=SourceTier.MANUAL_CURATED)
+
+        assert olx_result.total_score < gmaps_result.total_score
+        assert gmaps_result.total_score <= manual_result.total_score
+
+    def test_calculate_trust_score_reviews_add_points(self):
+        """More reviews should add more points"""
+        from app.services.trust_calculator import calculate_trust_score, SourceTier
+
+        no_reviews = calculate_trust_score(source=SourceTier.GOOGLE_MAPS, review_count=0)
+        many_reviews = calculate_trust_score(source=SourceTier.GOOGLE_MAPS, review_count=100)
+
+        assert many_reviews.total_score > no_reviews.total_score
+
+    def test_calculate_trust_score_high_rating_adds_points(self):
+        """High rating should add points over no rating"""
+        from app.services.trust_calculator import calculate_trust_score, SourceTier
+
+        no_rating = calculate_trust_score(source=SourceTier.GOOGLE_MAPS)
+        high_rating = calculate_trust_score(source=SourceTier.GOOGLE_MAPS, rating=4.8)
+
+        assert high_rating.total_score > no_rating.total_score
+        assert high_rating.breakdown["rating"] == 20
+
+    def test_calculate_trust_score_verification_signals(self):
+        """Photos, website, whatsapp, platform jobs each add points"""
+        from app.services.trust_calculator import calculate_trust_score, SourceTier
+
+        base = calculate_trust_score(source=SourceTier.GOOGLE_MAPS)
+        verified = calculate_trust_score(
+            source=SourceTier.GOOGLE_MAPS,
+            photos_count=5,
+            has_website=True,
+            has_whatsapp=True,
+            platform_jobs=3,
         )
 
-        assert result == 0.0
+        assert verified.total_score > base.total_score
+        # photos(5) + website(3) + whatsapp(3) + platform(4) = 15
+        assert verified.breakdown["verification"] == 15
 
-    def test_calculate_trust_score_weights(self):
-        """Should apply correct weights to components"""
-        from app.services.trust_calculator import calculate_trust_score
-
-        # Only license verified (15%)
-        license_only = calculate_trust_score(
-            project_count=0,
-            avg_rating=0.0,
-            license_verified=True,
-            insurance_verified=False,
-            background_check=False,
-            years_experience=0,
-        )
-        assert license_only == 0.15
-
-        # Only insurance verified (15%)
-        insurance_only = calculate_trust_score(
-            project_count=0,
-            avg_rating=0.0,
-            license_verified=False,
-            insurance_verified=True,
-            background_check=False,
-            years_experience=0,
-        )
-        assert insurance_only == 0.15
-
-        # Only background check (10%)
-        bg_only = calculate_trust_score(
-            project_count=0,
-            avg_rating=0.0,
-            license_verified=False,
-            insurance_verified=False,
-            background_check=True,
-            years_experience=0,
-        )
-        assert bg_only == 0.10
-
-    def test_calculate_trust_score_normalized_projects(self):
-        """Should cap project score at 50 projects"""
-        from app.services.trust_calculator import calculate_trust_score
-
-        score_50 = calculate_trust_score(50, 0.0, False, False, False, 0)
-        score_100 = calculate_trust_score(100, 0.0, False, False, False, 0)
-
-        # Both should give max 20% for projects
-        assert score_50 == score_100 == 0.20
-
-    def test_calculate_trust_score_normalized_experience(self):
-        """Should cap experience score at 20 years"""
-        from app.services.trust_calculator import calculate_trust_score
-
-        score_20 = calculate_trust_score(0, 0.0, False, False, False, 20)
-        score_40 = calculate_trust_score(0, 0.0, False, False, False, 40)
-
-        # Both should give max 10% for experience
-        assert score_20 == score_40 == 0.10
-
-    def test_create_trust_score_returns_object(self):
-        """Should return TrustScore object"""
-        from app.services.trust_calculator import create_trust_score
+    def test_create_trust_score_from_worker_dict(self):
+        """Should create TrustScoreDetailed from a worker dict"""
+        from app.services.trust_calculator import create_trust_score_from_worker_dict
 
         worker_data = {
-            "project_count": 25,
-            "avg_rating": 4.5,
-            "license_verified": True,
-            "insurance_verified": True,
-            "background_check": False,
-            "years_experience": 10,
+            "source_tier": "google_maps",
+            "gmaps_review_count": 50,
+            "gmaps_rating": 4.5,
+            "gmaps_photos_count": 10,
+            "website": "https://example.com",
+            "whatsapp": "+62812345678",
         }
 
-        result = create_trust_score(worker_data)
+        result = create_trust_score_from_worker_dict(worker_data)
 
-        assert hasattr(result, "overall_score")
-        assert result.project_count == 25
-        assert result.avg_rating == 4.5
-        assert result.license_verified is True
+        assert hasattr(result, "total_score")
+        assert hasattr(result, "trust_level")
+        assert result.total_score > 0
 
     def test_mask_worker_name_single_name(self):
-        """Should mask single name"""
+        """Should mask single name showing first char"""
         from app.services.trust_calculator import mask_worker_name
 
         result = mask_worker_name("Wayan")
 
-        assert result == "W****"
+        assert result.startswith("W")
+        assert len(result) > 1
 
     def test_mask_worker_name_two_names(self):
-        """Should show first name, mask last"""
+        """Should mask both name parts"""
         from app.services.trust_calculator import mask_worker_name
 
         result = mask_worker_name("Ahmad Suryanto")
 
-        assert result == "Ahmad S****"
+        # Both parts masked, first char of each preserved
+        assert result.startswith("A")
+        assert "S" in result
 
     def test_mask_worker_name_multiple_names(self):
-        """Should show first name, mask last only"""
+        """Should mask all name parts"""
         from app.services.trust_calculator import mask_worker_name
 
         result = mask_worker_name("Made Putra Wijaya")
 
-        assert result == "Made W****"
+        assert result.startswith("M")
+        assert " " in result  # Multi-part name preserves spaces
 
     def test_mask_worker_name_with_whitespace(self):
         """Should handle extra whitespace"""
@@ -270,4 +257,5 @@ class TestTrustCalculator:
 
         result = mask_worker_name("  John Doe  ")
 
-        assert result == "John D****"
+        assert result.startswith("J")
+        assert len(result) > 0

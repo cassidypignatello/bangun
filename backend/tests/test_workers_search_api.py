@@ -367,7 +367,7 @@ class TestWorkerSearchIntegration:
         # Mock the dependencies
         with patch("app.routes.workers_search.get_cached_workers", return_value=None):
             response = client.post(
-                "/workers/search",
+                "/api/v1/workers/search",
                 json={
                     "project_type": "pool",
                     "location": "Canggu"
@@ -384,7 +384,7 @@ class TestWorkerSearchIntegration:
         client = TestClient(app)
 
         response = client.post(
-            "/workers/search",
+            "/api/v1/workers/search",
             json={}  # Missing project_type
         )
 

@@ -380,7 +380,7 @@ class TestWorkerDetailsIntegration:
         """Should require user_email query parameter"""
         client = TestClient(app)
 
-        response = client.get("/workers/worker-123/details")
+        response = client.get("/api/v1/workers/worker-123/details")
 
         assert response.status_code == 422  # Validation error - missing user_email
 
@@ -406,7 +406,7 @@ class TestWorkerDetailsIntegration:
             mock_check.return_value = True
 
             response = client.get(
-                "/workers/worker-1/details?user_email=user@example.com"
+                "/api/v1/workers/worker-1/details?user_email=user@example.com"
             )
 
             assert response.status_code == 200

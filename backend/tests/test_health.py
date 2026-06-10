@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.main import app
 
 
+API = "/api/v1"
 client = TestClient(app)
 
 
@@ -17,13 +18,13 @@ class TestHealthCheck:
 
     def test_health_check_returns_200(self):
         """Should return 200 OK"""
-        response = client.get("/health/")
+        response = client.get(f"{API}/health/")
 
         assert response.status_code == 200
 
     def test_health_check_response_body(self):
         """Should return healthy status"""
-        response = client.get("/health/")
+        response = client.get(f"{API}/health/")
 
         data = response.json()
         assert data["status"] == "healthy"
@@ -39,7 +40,7 @@ class TestReadinessCheck:
             # Simulate database failure
             mock_client.return_value.table.return_value.select.return_value.limit.return_value.execute.side_effect = Exception("DB Error")
 
-            response = client.get("/health/ready")
+            response = client.get(f"{API}/health/ready")
 
             assert response.status_code == 200
 
@@ -50,7 +51,7 @@ class TestReadinessCheck:
             mock_response.data = []
             mock_client.return_value.table.return_value.select.return_value.limit.return_value.execute.return_value = mock_response
 
-            response = client.get("/health/ready")
+            response = client.get(f"{API}/health/ready")
 
             data = response.json()
             assert data["status"] == "ready"
@@ -64,7 +65,7 @@ class TestReadinessCheck:
         with patch("app.routes.health.get_supabase_client") as mock_client:
             mock_client.return_value.table.return_value.select.return_value.limit.return_value.execute.side_effect = Exception("Connection refused")
 
-            response = client.get("/health/ready")
+            response = client.get(f"{API}/health/ready")
 
             data = response.json()
             assert data["status"] == "not_ready"
@@ -78,13 +79,13 @@ class TestMetricsEndpoint:
 
     def test_metrics_returns_200(self):
         """Should return 200 OK"""
-        response = client.get("/health/metrics")
+        response = client.get(f"{API}/health/metrics")
 
         assert response.status_code == 200
 
     def test_metrics_includes_environment(self):
         """Should include environment info"""
-        response = client.get("/health/metrics")
+        response = client.get(f"{API}/health/metrics")
 
         data = response.json()
         assert "environment" in data
