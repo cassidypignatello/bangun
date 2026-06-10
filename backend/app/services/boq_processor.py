@@ -315,8 +315,7 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
 
     logger.info("gpt4o_extraction_start", total_pages=len(pages_to_process))
 
-    from app.config import Settings
-    extraction_model = Settings().boq_extraction_model
+    extraction_model = settings.boq_extraction_model
 
     for batch_start in range(0, len(pages_to_process), BATCH_SIZE):
         batch_end = min(batch_start + BATCH_SIZE, len(pages_to_process))
@@ -819,8 +818,7 @@ Be thorough - extract ALL items from ALL pages/sections. Indonesian terms:
     contractor_name = None
     project_location = None
 
-    from app.config import Settings
-    extraction_model = Settings().boq_extraction_model
+    extraction_model = settings.boq_extraction_model
 
     for batch_start in range(0, len(pages_to_process), BATCH_SIZE):
         batch_end = min(batch_start + BATCH_SIZE, len(pages_to_process))
