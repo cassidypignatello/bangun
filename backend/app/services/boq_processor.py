@@ -832,13 +832,9 @@ async def _process_boq_job_async(
         # Step 2: Save extracted items and update job metadata
         await _save_extracted_items(supabase, job_id, extracted)
 
-        # Update job with metadata
-        supabase.table("boq_jobs").update({
-            "project_name": extracted.project_name,
-            "contractor_name": extracted.contractor_name,
-            "project_location": extracted.project_location,
-            "total_items_extracted": len(extracted.items),
-        }).eq("id", job_id).execute()
+        # Update job with metadata (the supabase client here is synchronous,
+        # matching the helper's direct .execute() call)
+        _save_job_metadata_sync(supabase, job_id, extracted)
 
         await _update_job_status(supabase, job_id, progress=40)
 
