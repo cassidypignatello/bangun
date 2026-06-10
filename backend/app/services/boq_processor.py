@@ -643,7 +643,12 @@ def _save_extracted_items_sync(supabase, job_id: str, extracted: ExtractedBoQDat
 
 
 def _calculate_summary_sync(supabase, job_id: str) -> None:
-    """Sync version of calculating summary statistics."""
+    """Sync version of calculating summary statistics.
+
+    When zero items have been priced (priced_count == 0), writes NULL for
+    market_estimate, potential_savings, and savings_percent to signal
+    "not enough data" to the frontend.
+    """
     result = supabase.table("boq_items").select("*").eq("job_id", job_id).execute()
 
     items = result.data if result.data else []
@@ -670,14 +675,24 @@ def _calculate_summary_sync(supabase, job_id: str) -> None:
     )
     priced_count = sum(1 for i in items if i.get("tokopedia_price"))
 
+    # When no items were priced, write NULLs instead of zeros
+    if priced_count == 0:
+        market_estimate_value = None
+        potential_savings_value = None
+        savings_percent_value = None
+    else:
+        market_estimate_value = str(market_estimate)
+        potential_savings_value = str(potential_savings)
+        savings_percent_value = savings_percent
+
     supabase.table("boq_jobs").update({
         "materials_count": materials_count,
         "labor_count": labor_count,
         "owner_supply_count": owner_supply_count,
         "contractor_total": str(contractor_total),
-        "market_estimate": str(market_estimate),
-        "potential_savings": str(potential_savings),
-        "savings_percent": savings_percent,
+        "market_estimate": market_estimate_value,
+        "potential_savings": potential_savings_value,
+        "savings_percent": savings_percent_value,
         "priced_count": priced_count,
     }).eq("id", job_id).execute()
 

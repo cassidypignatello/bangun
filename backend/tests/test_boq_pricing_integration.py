@@ -386,7 +386,7 @@ class TestCalculateSummarySync:
         assert summary["savings_percent"] == pytest.approx(28.37, abs=0.01)
 
     def test_handles_no_priced_items(self):
-        """Should set market_estimate to 0 when no items are priced."""
+        """Should write NULLs for market_estimate/potential_savings/savings_percent when no items are priced."""
         from app.services.boq_processor import _calculate_summary_sync
 
         mock_sb = MagicMock()
@@ -417,8 +417,9 @@ class TestCalculateSummarySync:
         _calculate_summary_sync(mock_sb, "job-123")
 
         summary = mock_sb.table.return_value.update.call_args[0][0]
-        assert Decimal(summary["market_estimate"]) == Decimal("0")
-        assert Decimal(summary["potential_savings"]) == Decimal("500000")
+        assert summary["market_estimate"] is None
+        assert summary["potential_savings"] is None
+        assert summary["savings_percent"] is None
         assert summary["priced_count"] == 0
 
 
