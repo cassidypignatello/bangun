@@ -436,6 +436,28 @@ class TestWriteCache:
         assert data["price_max"] == 82000
         assert data["price_sample_size"] == 3
 
+    def test_rating_and_sold_stats_ignore_outliers(self):
+        """Outlier products' ratings/sold counts must not pollute cache aggregates."""
+        from app.services.boq_pricer import _write_cache
+
+        mock_sb, update_mock, _ = _make_write_cache_mock(
+            update_results=[[{"id": "existing"}]],
+        )
+
+        best = {"name": "Cat Kolam 1Kg", "price_idr": 78000}
+        candidates = [
+            {"price_idr": 75000, "rating": 4.6, "sold_count": 100},
+            {"price_idr": 78000, "rating": 4.8, "sold_count": 200},
+            {"price_idr": 9150000, "rating": 1.0, "sold_count": 99999},  # mismatched product
+        ]
+
+        _write_cache(mock_sb, "cat kolam", "cat kolam", best, candidates)
+
+        data = update_mock.call_args[0][0]
+        assert data["rating_avg"] == pytest.approx(4.7)
+        assert data["rating_sample_size"] == 2
+        assert data["count_sold_total"] == 300
+
 
 # =============================================================================
 # Pipeline Integration: Cache + Scrape

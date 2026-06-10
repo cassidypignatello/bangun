@@ -33,7 +33,7 @@ from app.integrations.marketplace import (
 logger = structlog.get_logger()
 
 CACHE_TTL_DAYS = 7
-CACHE_STATS_PRICE_BAND = 4.0  # candidates within best_price/4 .. best_price*4 count toward cache stats
+CACHE_STATS_PRICE_BAND = 4.0  # Intra-scrape outlier filter (candidate vs best price). Distinct from boq_match_max_price_ratio, which compares market vs contractor price.
 
 
 # =============================================================================
@@ -280,10 +280,11 @@ def _write_cache(
     """
     Write scraped pricing data into the materials table for future cache hits.
 
-    Price statistics are computed only from candidates whose price lies within a
-    sanity band around the best product's price: [best_price / CACHE_STATS_PRICE_BAND,
-    best_price * CACHE_STATS_PRICE_BAND]. This filters outliers (e.g., bulk packs,
-    mismatched products) that would otherwise corrupt median/min/max/avg calculations.
+    All cached statistics (prices, ratings, sold counts) are computed only from
+    candidates whose price lies within a sanity band around the best product's
+    price: [best_price / CACHE_STATS_PRICE_BAND, best_price * CACHE_STATS_PRICE_BAND].
+    This filters outliers (e.g., bulk packs, mismatched products) that would
+    otherwise corrupt median/min/max/avg, rating, and sold-count aggregates.
 
     Write strategy (materials has NOT NULL columns a blind upsert can't satisfy,
     and a unique index on LOWER(name_id) that an upsert can't arbitrate):
@@ -307,21 +308,30 @@ def _write_cache(
     if not prices:
         return
 
+    # Restrict ALL cached statistics to candidates priced near the best match —
+    # one mismatched product must not corrupt median, ratings, or sold counts.
     best_price = best_product.get("price_idr", 0) or 0
     if best_price > 0:
-        prices = [
-            p for p in prices
-            if best_price / CACHE_STATS_PRICE_BAND <= p <= best_price * CACHE_STATS_PRICE_BAND
+        in_band = [
+            c for c in all_candidates
+            if c.get("price_idr")
+            and best_price / CACHE_STATS_PRICE_BAND
+                <= c["price_idr"]
+                <= best_price * CACHE_STATS_PRICE_BAND
         ]
-    if not prices:
+    else:
+        in_band = [c for c in all_candidates if c.get("price_idr")]
+    if not in_band:
         return
+
+    prices = [c["price_idr"] for c in in_band]
 
     prices_sorted = sorted(prices)
     n = len(prices_sorted)
     price_median = prices_sorted[n // 2] if n % 2 == 1 else (prices_sorted[n // 2 - 1] + prices_sorted[n // 2]) / 2
 
-    ratings = [c.get("rating") for c in all_candidates if c.get("rating") is not None]
-    sold_counts = [c.get("sold_count", 0) or c.get("sold", 0) or 0 for c in all_candidates]
+    ratings = [c.get("rating") for c in in_band if c.get("rating") is not None]
+    sold_counts = [c.get("sold_count", 0) or c.get("sold", 0) or 0 for c in in_band]
 
     price_fields = {
         "tokopedia_search": query,
