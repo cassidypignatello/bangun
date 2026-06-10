@@ -106,6 +106,26 @@ EXISTING_PATTERNS = [
 # =============================================================================
 
 
+def _model_kwargs(model: str, token_limit: int) -> dict:
+    """
+    Build model-specific completion kwargs for extraction calls.
+
+    gpt-5.x models reject max_tokens (requiring max_completion_tokens) and
+    support only default temperature; earlier models keep max_tokens plus a
+    low temperature for deterministic extraction.
+
+    Args:
+        model: OpenAI model name (settings.boq_extraction_model).
+        token_limit: Output token cap for the call.
+
+    Returns:
+        Kwargs dict to splat into chat.completions.create().
+    """
+    if model.startswith("gpt-5"):
+        return {"max_completion_tokens": token_limit}
+    return {"max_tokens": token_limit, "temperature": 0.1}
+
+
 def _log_openai_usage(response, stage: str, **context) -> Optional[dict]:
     """
     Extract token usage from an OpenAI response and emit a structured log line.
@@ -367,8 +387,7 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
             response = client.chat.completions.create(
                 model=extraction_model,
                 messages=[{"role": "user", "content": content}],
-                max_tokens=8000,
-                temperature=0.1,
+                **_model_kwargs(extraction_model, 8000),
                 response_format={"type": "json_object"},
             )
 
@@ -878,8 +897,7 @@ Be thorough - extract ALL items from ALL pages/sections. Indonesian terms:
             response = await client.chat.completions.create(
                 model=extraction_model,
                 messages=[{"role": "user", "content": content}],
-                max_tokens=8000,
-                temperature=0.1,
+                **_model_kwargs(extraction_model, 8000),
                 response_format={"type": "json_object"},
             )
             _log_openai_usage(response, stage="pdf_batch_async", batch=batch_num)
@@ -971,8 +989,7 @@ async def _extract_pages_individually(
                         "role": "user",
                         "content": [{"type": "text", "text": prompt}, img]
                     }],
-                    max_tokens=4000,
-                    temperature=0.1,
+                    **_model_kwargs(extraction_model, 4000),
                     response_format={"type": "json_object"},
                 )
             )
