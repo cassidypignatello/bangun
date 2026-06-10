@@ -96,8 +96,10 @@ STRONG_LABOR_OVERRIDES = [
     "cat exterior",
     "cat interior",
     "refinishing",
+    # "waterproofing" deliberately overlaps MATERIAL_INDICATORS' "waterproof":
+    # the -ing form marks an application charge, while bare "waterproof" stays
+    # a material cue (e.g. "waterproof membrane" is a product).
     "waterproofing",
-    "waterproof ",
 ]
 
 OWNER_SUPPLY_PATTERNS = [
@@ -354,6 +356,7 @@ def _extract_from_pdf_sync(file_content: bytes, filename: str) -> ExtractedBoQDa
         logger.error("pdf_to_images_failed", error=str(e))
         return ExtractedBoQData(extraction_warnings=[f"PDF conversion failed: {str(e)}"])
 
+    # Keep classification guidance in sync with STRONG_LABOR_OVERRIDES (post-processing overrides).
     extraction_prompt = """Analyze these pages from an Indonesian construction BoQ (Bill of Quantity / Rencana Anggaran Biaya) document.
 
 Extract ALL line items into a structured JSON format. Pay attention to:
@@ -363,8 +366,8 @@ Extract ALL line items into a structured JSON format. Pay attention to:
 4. Items marked "(use existing)" or "(existing)" - set is_existing: true
 
 Classify each item_type using EXACTLY one of these lowercase values:
-- "material": Physical materials being supplied (granit, keramik, pipa, kabel, pintu, jendela, kusen, batu alam, cat, waterproofing)
-- "labor": Work/service items (bongkar, instalasi, pasang, pek./pekerjaan, plaster, aci, pengecatan, cleaning, perbaikan, pembuangan). Section "PEKERJAAN BONGKARAN" items are always labor. "Pek." prefix items are labor.
+- "material": Physical materials being supplied (granit, keramik, pipa, kabel, pintu, jendela, kusen, batu alam)
+- "labor": Work/service items (bongkar, instalasi, pasang, pek./pekerjaan, plaster, aci, pengecatan, cleaning, perbaikan, pembuangan). Section "PEKERJAAN BONGKARAN" items are always labor. "Pek." prefix items are labor. Painting, coating, waterproofing and refinishing work (application charges) are labor.
 - "equipment": Standalone installed equipment (pompa, AC unit, water heater, filter)
 - "unknown": Only if truly cannot determine
 
@@ -936,6 +939,7 @@ async def _extract_from_pdf(file_content: bytes, filename: str) -> ExtractedBoQD
             extraction_warnings=[f"PDF conversion failed: {str(e)}"]
         )
 
+    # Keep classification guidance in sync with STRONG_LABOR_OVERRIDES (post-processing overrides).
     extraction_prompt = """Analyze these pages from an Indonesian construction BoQ (Bill of Quantity / Rencana Anggaran Biaya) document.
 
 Extract ALL line items into a structured JSON format. Pay attention to:
@@ -945,8 +949,8 @@ Extract ALL line items into a structured JSON format. Pay attention to:
 4. Items marked "(use existing)" or "(existing)" - set is_existing: true
 
 Classify each item_type using EXACTLY one of these lowercase values:
-- "material": Physical materials being supplied (granit, keramik, pipa, kabel, pintu, jendela, kusen, batu alam, cat, waterproofing)
-- "labor": Work/service items (bongkar, instalasi, pasang, pek./pekerjaan, plaster, aci, pengecatan, cleaning, perbaikan, pembuangan). Section "PEKERJAAN BONGKARAN" items are always labor. "Pek." prefix items are labor.
+- "material": Physical materials being supplied (granit, keramik, pipa, kabel, pintu, jendela, kusen, batu alam)
+- "labor": Work/service items (bongkar, instalasi, pasang, pek./pekerjaan, plaster, aci, pengecatan, cleaning, perbaikan, pembuangan). Section "PEKERJAAN BONGKARAN" items are always labor. "Pek." prefix items are labor. Painting, coating, waterproofing and refinishing work (application charges) are labor.
 - "equipment": Standalone installed equipment (pompa, AC unit, water heater, filter)
 - "unknown": Only if truly cannot determine
 
@@ -1330,17 +1334,22 @@ def _normalize_item_type(raw_value: str, description: str = "") -> BoQItemType:
     """Normalize GPT's item_type response with override layer and fallback classification.
 
     Classification layers (in order):
-    0. Strong overrides: application charges (paint, waterproofing) override GPT's
-       "material" label when keywords appear in description (STRONG_LABOR_OVERRIDES).
+    0. Strong overrides: application charges (paint, waterproofing) override ANY GPT
+       label when keywords appear in description (STRONG_LABOR_OVERRIDES), unless
+       the line is owner-supplied (a product purchase by definition).
     1. Variant normalization: handle common GPT spelling variants (labour → labor, etc.).
     2. Rule fallback: when GPT returns 'unknown', use rule-based classifier on description.
 
     This ensures application charges (billed per-area, no product) are correctly
-    classified as labor even when GPT incorrectly says "material".
+    classified as labor regardless of GPT's label.
     """
     # Layer 0: Check for strong labor overrides in description
     desc_lower = (description or "").lower()
-    if any(kw in desc_lower for kw in STRONG_LABOR_OVERRIDES):
+    # Owner-supplied lines are product purchases by definition — never
+    # application charges — so the labor overrides must not fire on them.
+    if not _check_owner_supply(description) and any(
+        kw in desc_lower for kw in STRONG_LABOR_OVERRIDES
+    ):
         return BoQItemType.LABOR
 
     if not raw_value:

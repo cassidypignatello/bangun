@@ -27,3 +27,12 @@ class TestStrongLaborOverrides:
     def test_pas_prefix_items_keep_gpt_label(self):
         """Pas. (install) items are a known convention difference — do NOT override."""
         assert _normalize_item_type("material", "Pas. Granit Dinding (Suply By Owner)") == BoQItemType.MATERIAL
+
+    def test_owner_supplied_products_stay_material(self):
+        """Owner-supplied paint/membrane lines are purchases, not application charges."""
+        assert _normalize_item_type("material", "Cat Tembok Dulux 5kg (Supply By Owner)") == BoQItemType.MATERIAL
+        assert _normalize_item_type("material", "Waterproofing Aquaproof 4kg (Suply By Owner)") == BoQItemType.MATERIAL
+
+    def test_override_applies_to_any_gpt_label(self):
+        """Layer 0 wins over every GPT label, not just material."""
+        assert _normalize_item_type("equipment", "Waterproofing kolam renang") == BoQItemType.LABOR
