@@ -411,7 +411,20 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
                 continue
 
             if _is_truncated(choice):
+                # Truncated output often still parses as valid-but-incomplete
+                # JSON (json_object mode closes braces), so never trust it:
+                # recover the whole batch page-by-page instead.
                 logger.warning("gpt4o_batch_truncated", batch=batch_num)
+                extraction_warnings.append(
+                    f"Batch {batch_num} hit the output limit; recovered page-by-page"
+                )
+                fb_items, fb_warnings = _extract_pages_individually_sync(
+                    client, batch_pages, extraction_prompt, extraction_model,
+                    page_offset=batch_start,
+                )
+                all_items.extend(fb_items)
+                extraction_warnings.extend(fb_warnings)
+                continue
 
             data = json.loads(choice.message.content)
 
@@ -445,7 +458,8 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
                 f"Batch {batch_num} truncated/unparseable; recovered page-by-page"
             )
             fb_items, fb_warnings = _extract_pages_individually_sync(
-                client, batch_pages, extraction_prompt, extraction_model
+                client, batch_pages, extraction_prompt, extraction_model,
+                page_offset=batch_start,
             )
             all_items.extend(fb_items)
             extraction_warnings.extend(fb_warnings)
@@ -478,7 +492,8 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
 
 
 def _extract_pages_individually_sync(
-    client, batch_pages: list, prompt: str, extraction_model: str
+    client, batch_pages: list, prompt: str, extraction_model: str,
+    page_offset: int = 0,
 ) -> tuple[list, list]:
     """
     Recover a failed batch by extracting its pages one at a time.
@@ -491,9 +506,12 @@ def _extract_pages_individually_sync(
         batch_pages: Image-content dicts for the failed batch's pages.
         prompt: The extraction prompt used for batches.
         extraction_model: Model name for the calls.
+        page_offset: Absolute index of the batch's first page, so logs and
+            warnings reference document-level page numbers across batches.
 
     Returns:
-        (items, warnings) — raw item dicts and warning strings.
+        (items, warnings) — validated BoQItemExtracted objects (identical
+        construction to the batch path) and warning strings.
     """
     import json
 
@@ -501,6 +519,7 @@ def _extract_pages_individually_sync(
     warnings: list = []
 
     for idx, img_content in enumerate(batch_pages):
+        page_num = page_offset + idx
         try:
             response = client.chat.completions.create(
                 model=extraction_model,
@@ -511,18 +530,31 @@ def _extract_pages_individually_sync(
                 response_format={"type": "json_object"},
                 **_model_kwargs(extraction_model, 4000),
             )
-            _log_openai_usage(response, stage="pdf_page_fallback_sync", page=idx)
+            _log_openai_usage(response, stage="pdf_page_fallback_sync", page=page_num)
 
             choice = response.choices[0]
             if getattr(choice.message, "refusal", None) or not choice.message.content:
-                warnings.append(f"Fallback page {idx} returned no content")
+                warnings.append(f"Fallback page {page_num} returned no content")
                 continue
 
             data = json.loads(choice.message.content)
-            items.extend(data.get("items", []))
+            for item_data in data.get("items", []):
+                items.append(BoQItemExtracted(
+                    section=item_data.get("section"),
+                    item_number=item_data.get("item_number"),
+                    description=item_data.get("description", ""),
+                    unit=item_data.get("unit"),
+                    quantity=item_data.get("quantity"),
+                    contractor_unit_price=item_data.get("contractor_unit_price"),
+                    contractor_total=item_data.get("contractor_total"),
+                    item_type=_normalize_item_type(item_data.get("item_type", "unknown"), item_data.get("description", "")),
+                    is_owner_supply=item_data.get("is_owner_supply", False),
+                    is_existing=item_data.get("is_existing", False),
+                    extraction_confidence=item_data.get("extraction_confidence", 0.8),
+                ))
         except Exception as e:
-            warnings.append(f"Fallback page {idx} failed: {e}")
-            logger.warning("pdf_page_fallback_failed", page=idx, error=str(e))
+            warnings.append(f"Fallback page {page_num} failed: {e}")
+            logger.warning("pdf_page_fallback_failed", page=page_num, error=str(e))
 
     return items, warnings
 

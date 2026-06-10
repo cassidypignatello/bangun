@@ -73,32 +73,35 @@ class TestBatchTruncationDetection:
         assert _is_truncated(SimpleNamespace(finish_reason=None)) is False
 
 
+def _page_response(items, finish_reason="stop"):
+    """Canned OpenAI-shaped response whose content is a JSON items payload."""
+    import json as _json
+
+    return SimpleNamespace(
+        usage=None,
+        choices=[SimpleNamespace(
+            finish_reason=finish_reason,
+            message=SimpleNamespace(refusal=None, content=_json.dumps({"items": items})),
+        )],
+    )
+
+
 class TestExtractPagesIndividuallySync:
     def test_collects_items_across_pages(self):
-        import json as _json
         from unittest.mock import MagicMock
         from app.services.boq_processor import _extract_pages_individually_sync
 
-        def page_response(items):
-            return SimpleNamespace(
-                usage=None,
-                choices=[SimpleNamespace(
-                    finish_reason="stop",
-                    message=SimpleNamespace(refusal=None, content=_json.dumps({"items": items})),
-                )],
-            )
-
         client = MagicMock()
         client.chat.completions.create.side_effect = [
-            page_response([{"description": "A"}]),
-            page_response([{"description": "B"}, {"description": "C"}]),
+            _page_response([{"description": "A"}]),
+            _page_response([{"description": "B"}, {"description": "C"}]),
         ]
 
         items, warnings = _extract_pages_individually_sync(
             client, [{"type": "image_url"}, {"type": "image_url"}], "prompt", "gpt-4o"
         )
 
-        assert [i["description"] for i in items] == ["A", "B", "C"]
+        assert [i.description for i in items] == ["A", "B", "C"]
         assert warnings == []
 
     def test_page_failure_recorded_not_raised(self):
@@ -115,3 +118,86 @@ class TestExtractPagesIndividuallySync:
         assert items == []
         assert len(warnings) == 1
         assert "failed" in warnings[0]
+
+    def test_fallback_items_validate_into_extracted_data(self):
+        """Recovered items must construct ExtractedBoQData without ValidationError."""
+        from unittest.mock import MagicMock
+        from app.schemas.boq import ExtractedBoQData
+        from app.services.boq_processor import _extract_pages_individually_sync
+
+        # Raw-dict field names mirror what the batch loop reads from GPT output:
+        # contractor_unit_price / contractor_total, passed straight to Pydantic.
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            _page_response([
+                {"description": "Pek. Plester dinding", "item_type": "work",
+                 "quantity": 10, "unit": "m2",
+                 "contractor_unit_price": 50000, "contractor_total": 500000},
+                {"item_type": "materials"},  # missing description, variant type
+            ]),
+        ]
+
+        items, warnings = _extract_pages_individually_sync(
+            client, [{"type": "image_url"}], "p", "gpt-4o"
+        )
+
+        data = ExtractedBoQData(items=items)  # must not raise
+        assert len(data.items) == 2
+        assert data.items[0].item_type.value == "labor"  # "work" normalized
+        assert data.items[1].item_type.value == "material"  # "materials" normalized
+        assert data.items[1].description == ""
+
+    def test_page_offset_threads_into_warnings(self):
+        """Page numbers in warnings are absolute, not intra-batch indices."""
+        from unittest.mock import MagicMock
+        from app.services.boq_processor import _extract_pages_individually_sync
+
+        client = MagicMock()
+        client.chat.completions.create.side_effect = Exception("boom")
+
+        items, warnings = _extract_pages_individually_sync(
+            client, [{"type": "image_url"}], "prompt", "gpt-4o", page_offset=6
+        )
+
+        assert items == []
+        assert "page 6" in warnings[0]
+
+
+class TestTruncatedBatchRecovery:
+    def test_truncated_batch_with_valid_json_goes_to_fallback(self, monkeypatch):
+        """finish_reason=='length' must trigger page-by-page recovery even when
+        the truncated content parses as valid (but incomplete) JSON."""
+        import fitz
+        from unittest.mock import MagicMock
+        import app.config
+        from app.services import boq_processor
+
+        doc = fitz.open()
+        doc.new_page()
+        doc.new_page()  # page 0 is skipped as cover; one page is processed
+        pdf_bytes = doc.tobytes()
+        doc.close()
+
+        settings = SimpleNamespace(
+            boq_dry_run=False,
+            openai_api_key="sk-test",
+            boq_max_pages=10,
+            boq_extraction_model="gpt-4o",
+        )
+        monkeypatch.setattr(app.config, "get_settings", lambda: settings)
+
+        client = MagicMock()
+        client.chat.completions.create.side_effect = [
+            # Batch call: valid JSON but cut off by the output-token cap.
+            _page_response([{"description": "INCOMPLETE"}], finish_reason="length"),
+            # Fallback per-page call recovers the real items.
+            _page_response([{"description": "Recovered A"}, {"description": "Recovered B"}]),
+        ]
+        import openai
+        monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: client)
+
+        result = boq_processor._extract_from_pdf_sync(pdf_bytes, "test.pdf")
+
+        assert [i.description for i in result.items] == ["Recovered A", "Recovered B"]
+        assert any("hit the output limit" in w for w in result.extraction_warnings)
+        assert client.chat.completions.create.call_count == 2
