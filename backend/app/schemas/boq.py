@@ -191,6 +191,8 @@ class BoQAnalysisResults(BaseModel):
         default_factory=list, description="Labor items (not priced)"
     )
 
+    extraction_warnings: list[str] = Field(default_factory=list)
+
     completed_at: Optional[datetime] = None
 
 

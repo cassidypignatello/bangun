@@ -209,13 +209,7 @@ def process_boq_job_sync(
 
         # Step 2: Save extracted items and update job metadata
         _save_extracted_items_sync(supabase, job_id, extracted)
-
-        supabase.table("boq_jobs").update({
-            "project_name": extracted.project_name,
-            "contractor_name": extracted.contractor_name,
-            "project_location": extracted.project_location,
-            "total_items_extracted": len(extracted.items),
-        }).eq("id", job_id).execute()
+        _save_job_metadata_sync(supabase, job_id, extracted)
 
         _update_job_status_sync(supabase, job_id, progress=40)
 
@@ -580,6 +574,25 @@ def _update_job_status_sync(
         update_data["error_message"] = error_message
     if update_data:
         supabase.table("boq_jobs").update(update_data).eq("id", job_id).execute()
+
+
+def _save_job_metadata_sync(supabase, job_id: str, extracted) -> None:
+    """
+    Persist extraction-level metadata (document header fields, item count,
+    and any data-loss warnings) onto the job row.
+
+    Args:
+        supabase: Supabase client.
+        job_id: BoQ job id.
+        extracted: ExtractedBoQData from the extraction step.
+    """
+    supabase.table("boq_jobs").update({
+        "project_name": extracted.project_name,
+        "contractor_name": extracted.contractor_name,
+        "project_location": extracted.project_location,
+        "total_items_extracted": len(extracted.items),
+        "extraction_warnings": extracted.extraction_warnings,
+    }).eq("id", job_id).execute()
 
 
 def _save_extracted_items_sync(supabase, job_id: str, extracted: ExtractedBoQData) -> None:

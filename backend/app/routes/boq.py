@@ -338,5 +338,6 @@ async def get_boq_results(request: Request, job_id: str):
         overpriced_items=[BoQItemPriced(**item) for item in overpriced_items],
         all_materials=[BoQItemPriced(**item) for item in all_materials],
         labor_items=[BoQItemExtracted(**item) for item in labor_items],
+        extraction_warnings=job.get("extraction_warnings") or [],
         completed_at=job.get("completed_at"),
     )

@@ -494,3 +494,27 @@ class TestProgressCallback:
         assert all(40 <= v <= 85 for v in progress_values)
         # Should be increasing
         assert progress_values[1] > progress_values[0]
+
+
+class TestExtractionWarningsPersisted:
+    def test_warnings_written_to_job_row(self, mock_supabase):
+        """The post-extraction job-metadata update includes extraction_warnings."""
+        from app.services.boq_processor import _save_job_metadata_sync
+        from app.schemas.boq import ExtractedBoQData
+
+        mock_supabase.table("boq_jobs").insert({"id": "job-1"}).execute()
+
+        extracted = ExtractedBoQData(
+            project_name="P",
+            contractor_name="C",
+            items=[],
+            extraction_warnings=["Batch 1 hit the output limit; recovered page-by-page"],
+        )
+        _save_job_metadata_sync(mock_supabase, "job-1", extracted)
+
+        row = mock_supabase._tables["boq_jobs"][0]
+        assert row["extraction_warnings"] == [
+            "Batch 1 hit the output limit; recovered page-by-page"
+        ]
+        assert row["project_name"] == "P"
+        assert row["total_items_extracted"] == 0
