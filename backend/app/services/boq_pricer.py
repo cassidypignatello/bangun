@@ -33,6 +33,7 @@ from app.integrations.marketplace import (
 logger = structlog.get_logger()
 
 CACHE_TTL_DAYS = 7
+CACHE_STATS_PRICE_BAND = 4.0  # candidates within best_price/4 .. best_price*4 count toward cache stats
 
 
 # =============================================================================
@@ -279,6 +280,11 @@ def _write_cache(
     """
     Write scraped pricing data into the materials table for future cache hits.
 
+    Price statistics are computed only from candidates whose price lies within a
+    sanity band around the best product's price: [best_price / CACHE_STATS_PRICE_BAND,
+    best_price * CACHE_STATS_PRICE_BAND]. This filters outliers (e.g., bulk packs,
+    mismatched products) that would otherwise corrupt median/min/max/avg calculations.
+
     Write strategy (materials has NOT NULL columns a blind upsert can't satisfy,
     and a unique index on LOWER(name_id) that an upsert can't arbitrate):
       1. Update the existing cache row matched by normalized_name.
@@ -298,6 +304,15 @@ def _write_cache(
         return
 
     prices = [c.get("price_idr", 0) for c in all_candidates if c.get("price_idr")]
+    if not prices:
+        return
+
+    best_price = best_product.get("price_idr", 0) or 0
+    if best_price > 0:
+        prices = [
+            p for p in prices
+            if best_price / CACHE_STATS_PRICE_BAND <= p <= best_price * CACHE_STATS_PRICE_BAND
+        ]
     if not prices:
         return
 

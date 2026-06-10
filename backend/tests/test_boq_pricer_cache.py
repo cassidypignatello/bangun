@@ -412,6 +412,30 @@ class TestWriteCache:
             [{"price_idr": 100}],
         )
 
+    def test_median_ignores_price_outliers(self):
+        """Stats are computed over candidates near the best product's price."""
+        from app.services.boq_pricer import _write_cache
+
+        mock_sb, update_mock, _ = _make_write_cache_mock(
+            update_results=[[{"id": "existing"}]],
+        )
+
+        best = {"name": "Cat Kolam 1Kg", "price_idr": 78000}
+        candidates = [
+            {"price_idr": 75000},
+            {"price_idr": 78000},
+            {"price_idr": 82000},
+            {"price_idr": 2900000},   # bulk-pack mismatch
+            {"price_idr": 9150000},   # different product entirely
+        ]
+
+        _write_cache(mock_sb, "cat kolam", "cat kolam", best, candidates)
+
+        data = update_mock.call_args[0][0]
+        assert data["price_median"] == 78000
+        assert data["price_max"] == 82000
+        assert data["price_sample_size"] == 3
+
 
 # =============================================================================
 # Pipeline Integration: Cache + Scrape
