@@ -837,3 +837,33 @@ class TestMatchQualityGate:
         pairs = self._run(items, products)
         _, match = pairs[0]
         assert match.result is not None
+
+    def test_rejects_cached_price_outside_sanity_band(self):
+        """A cached median far outside the contractor price band is gated out."""
+        from datetime import datetime, timezone, timedelta
+
+        items = [{"id": "1", "description": "Waterproofing Kolam", "quantity": 1,
+                  "contractor_unit_price": 75000}]
+
+        fresh_time = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+        mock_sb = MagicMock()
+        cache_result = MagicMock()
+        cache_result.data = [{
+            "normalized_name": "kolam waterproofing",
+            "price_median": 2900000,  # ~39x contractor price
+            "price_updated_at": fresh_time,
+            "name_id": "Waterproofing Kolam",
+        }]
+        mock_sb.table.return_value.select.return_value.in_.return_value.execute.return_value = cache_result
+
+        provider = MagicMock()
+        pairs = batch_price_materials(
+            items=items, provider=provider, supabase_client=mock_sb,
+        )
+
+        _, match = pairs[0]
+        assert match.result is None
+        assert match.from_cache is True
+        assert match.market_unit_price is None
+        # cache hit means no scrape should have happened
+        provider.batch_search_sync.assert_not_called()

@@ -162,6 +162,20 @@ def _lookup_cache(
     return hits
 
 
+def _no_result_match(query: str, from_cache: bool) -> MaterialPriceMatch:
+    """A match with no marketplace result (nothing found, or gated out)."""
+    return MaterialPriceMatch(
+        search_query=query,
+        result=None,
+        match_confidence=0.0,
+        market_unit_price=None,
+        market_total=None,
+        price_difference=None,
+        price_difference_pct=None,
+        from_cache=from_cache,
+    )
+
+
 def _build_match_from_cache(
     item: dict,
     query: str,
@@ -205,16 +219,7 @@ def _build_match_from_cache(
                 contractor_price=int(contractor_price),
                 source="cache",
             )
-            return MaterialPriceMatch(
-                search_query=query,
-                result=None,
-                match_confidence=0.0,
-                market_unit_price=None,
-                market_total=None,
-                price_difference=None,
-                price_difference_pct=None,
-                from_cache=True,
-            )
+            return _no_result_match(query, from_cache=True)
 
     market_total = market_price * quantity
 
@@ -543,16 +548,7 @@ def _build_match_from_scrape(
         or a no-result match if the quality gate rejects the candidate.
     """
     if best is None:
-        return MaterialPriceMatch(
-            search_query=query,
-            result=None,
-            match_confidence=0.0,
-            market_unit_price=None,
-            market_total=None,
-            price_difference=None,
-            price_difference_pct=None,
-            from_cache=False,
-        )
+        return _no_result_match(query, from_cache=False)
 
     # Extract from BestSellerScore
     product = best.product
@@ -585,16 +581,7 @@ def _build_match_from_scrape(
             market_price=int(market_price),
             contractor_price=int(contractor_price),
         )
-        return MaterialPriceMatch(
-            search_query=query,
-            result=None,
-            match_confidence=0.0,
-            market_unit_price=None,
-            market_total=None,
-            price_difference=None,
-            price_difference_pct=None,
-            from_cache=False,
-        )
+        return _no_result_match(query, from_cache=False)
 
     market_total = market_price * quantity
 
