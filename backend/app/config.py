@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     boq_max_pages: int = 10  # Max PDF pages to process (lower for cheaper testing)
     boq_max_price_lookups: int = 20  # Max material items sent to marketplace for pricing per BOQ job
     marketplace_provider: str = "tokopedia"  # Marketplace for price comparison (future: "shopee")
+    boq_extraction_model: str = "gpt-4o"  # OpenAI model for BoQ PDF extraction (BOQ_EXTRACTION_MODEL env var)
 
     model_config = SettingsConfigDict(
         env_file=".env",

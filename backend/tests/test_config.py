@@ -53,3 +53,18 @@ class TestBoqPricingSettings:
         """marketplace_provider can be set explicitly via constructor"""
         settings = Settings(**REQUIRED_SETTINGS, marketplace_provider="shopee")
         assert settings.marketplace_provider == "shopee"
+
+
+class TestBoqExtractionModelSetting:
+    """Tests for the configurable BoQ extraction model"""
+
+    def test_boq_extraction_model_default(self):
+        """boq_extraction_model defaults to gpt-4o"""
+        settings = Settings(**REQUIRED_SETTINGS)
+        assert settings.boq_extraction_model == "gpt-4o"
+
+    def test_boq_extraction_model_env_override(self, monkeypatch):
+        """boq_extraction_model can be overridden via environment variable"""
+        monkeypatch.setenv("BOQ_EXTRACTION_MODEL", "gpt-4o-mini")
+        settings = Settings(**REQUIRED_SETTINGS)
+        assert settings.boq_extraction_model == "gpt-4o-mini"

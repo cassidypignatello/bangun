@@ -315,6 +315,9 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
 
     logger.info("gpt4o_extraction_start", total_pages=len(pages_to_process))
 
+    from app.config import Settings
+    extraction_model = Settings().boq_extraction_model
+
     for batch_start in range(0, len(pages_to_process), BATCH_SIZE):
         batch_end = min(batch_start + BATCH_SIZE, len(pages_to_process))
         batch_pages = pages_to_process[batch_start:batch_end]
@@ -329,7 +332,7 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
             logger.info("gpt4o_api_call_starting", batch=batch_num, content_items=len(content))
 
             response = client.chat.completions.create(
-                model="gpt-4o",
+                model=extraction_model,
                 messages=[{"role": "user", "content": content}],
                 max_tokens=8000,
                 temperature=0.1,
@@ -816,6 +819,9 @@ Be thorough - extract ALL items from ALL pages/sections. Indonesian terms:
     contractor_name = None
     project_location = None
 
+    from app.config import Settings
+    extraction_model = Settings().boq_extraction_model
+
     for batch_start in range(0, len(pages_to_process), BATCH_SIZE):
         batch_end = min(batch_start + BATCH_SIZE, len(pages_to_process))
         batch_pages = pages_to_process[batch_start:batch_end]
@@ -837,7 +843,7 @@ Be thorough - extract ALL items from ALL pages/sections. Indonesian terms:
 
             # Use native async OpenAI client - no thread needed
             response = await client.chat.completions.create(
-                model="gpt-4o",
+                model=extraction_model,
                 messages=[{"role": "user", "content": content}],
                 max_tokens=8000,
                 temperature=0.1,
@@ -918,6 +924,8 @@ async def _extract_pages_individually(
 ) -> ExtractedBoQData:
     """Fall back to extracting pages one by one if batch extraction fails."""
     import json
+    from app.config import Settings
+    extraction_model = Settings().boq_extraction_model
 
     all_items = []
     warnings = []
@@ -926,7 +934,7 @@ async def _extract_pages_individually(
         try:
             response = await asyncio.to_thread(
                 lambda img=img_content: client.chat.completions.create(
-                    model="gpt-4o",
+                    model=extraction_model,
                     messages=[{
                         "role": "user",
                         "content": [{"type": "text", "text": prompt}, img]
