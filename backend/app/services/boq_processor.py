@@ -160,9 +160,45 @@ def process_boq_job_sync(
 
         _update_job_status_sync(supabase, job_id, progress=40)
 
-        # Step 3: Look up prices for material items (skip for now, do async later)
+        # Step 3: Look up market prices for material items
         logger.info("boq_pricing_start", job_id=job_id)
-        # Skip pricing for initial release - just mark complete
+
+        from app.config import Settings
+        settings = Settings()
+
+        if not settings.boq_dry_run:
+            # Fetch saved items from DB (need IDs for persistence)
+            saved_items_resp = supabase.table("boq_items").select("*").eq(
+                "job_id", job_id
+            ).eq("item_type", "material").execute()
+            material_items = saved_items_resp.data or []
+
+            if material_items:
+                from app.integrations.marketplace import MockMarketplaceProvider, TokopediaProvider
+                from app.services.boq_pricer import batch_price_materials, persist_price_results
+
+                if settings.debug and settings.use_mock_prices:
+                    provider = MockMarketplaceProvider()
+                else:
+                    provider = TokopediaProvider(apify_token=settings.apify_token)
+
+                def on_progress(pct):
+                    _update_job_status_sync(supabase, job_id, progress=pct)
+
+                pairs = batch_price_materials(
+                    items=material_items,
+                    provider=provider,
+                    supabase_client=supabase,
+                    max_lookups=settings.boq_max_price_lookups,
+                    progress_callback=on_progress,
+                )
+
+                persist_price_results(supabase, job_id, pairs)
+            else:
+                logger.info("boq_pricing_no_materials", job_id=job_id)
+        else:
+            logger.info("boq_pricing_skipped_dry_run", job_id=job_id)
+
         _update_job_status_sync(supabase, job_id, progress=85)
 
         # Step 4: Calculate summary statistics
@@ -430,13 +466,28 @@ def _calculate_summary_sync(supabase, job_id: str) -> None:
         for i in items
     )
 
+    # Calculate real market estimate from priced items
+    market_estimate = sum(
+        Decimal(str(i.get("market_total", 0) or 0))
+        for i in items
+        if i.get("market_total")
+    )
+    potential_savings = max(Decimal("0"), contractor_total - market_estimate)
+    savings_percent = (
+        float(potential_savings / contractor_total * 100)
+        if contractor_total > 0 else 0.0
+    )
+    priced_count = sum(1 for i in items if i.get("tokopedia_price"))
+
     supabase.table("boq_jobs").update({
         "materials_count": materials_count,
         "labor_count": labor_count,
         "owner_supply_count": owner_supply_count,
         "contractor_total": str(contractor_total),
-        "market_estimate": "0.00",  # Placeholder
-        "potential_savings": "0.00",  # Placeholder
+        "market_estimate": str(market_estimate),
+        "potential_savings": str(potential_savings),
+        "savings_percent": savings_percent,
+        "priced_count": priced_count,
     }).eq("id", job_id).execute()
 
 
