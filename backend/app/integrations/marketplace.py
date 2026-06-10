@@ -113,6 +113,63 @@ class MaterialPriceMatch:
 
 
 # =============================================================================
+# Actor Item Mapping
+# =============================================================================
+
+
+def _to_int(value) -> int:
+    """Parse ints that may arrive as strings ('100938') or be absent."""
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def map_actor_item(raw: dict) -> dict:
+    """
+    Map a fatihtahta/tokopedia-scraper item to the flat product shape the
+    ranking pipeline expects.
+
+    The actor's 2026 schema nests fields under product_core,
+    pricing_and_inventory, performance_and_flags, seller_and_platform_context,
+    and search_listing_context. Items that are already flat (mock provider,
+    legacy actor output with a price_idr key) pass through unchanged.
+
+    Args:
+        raw: One dataset item from the actor.
+
+    Returns:
+        Flat dict with name, price_idr, url, shop, location, rating,
+        sold_count, stock, status, and search_query (the actor-reported
+        originating query, used for result routing).
+    """
+    if "price_idr" in raw:
+        return raw
+
+    core = raw.get("product_core") or {}
+    pricing = raw.get("pricing_and_inventory") or {}
+    perf = raw.get("performance_and_flags") or {}
+    seller = raw.get("seller_and_platform_context") or {}
+    listing = raw.get("search_listing_context") or {}
+    compat = raw.get("compatibility") or {}
+
+    rating = perf.get("rating")
+
+    return {
+        "name": core.get("product_title") or "",
+        "price_idr": _to_int(pricing.get("current_price")),
+        "url": listing.get("listing_url") or "",
+        "shop": seller.get("shop_name") or "",
+        "location": seller.get("shop_city") or "",
+        "rating": float(rating) if rating is not None else None,
+        "sold_count": _to_int(perf.get("sold_count")),
+        "stock": _to_int(pricing.get("stock_value")),
+        "status": (core.get("product_status") or "active").lower(),
+        "search_query": listing.get("search_query") or compat.get("legacy_source") or "",
+    }
+
+
+# =============================================================================
 # Abstract Provider
 # =============================================================================
 
@@ -221,8 +278,10 @@ class TokopediaProvider(MarketplaceProvider):
         if not dataset_id:
             logger.warning("marketplace_run_no_dataset", query=query)
             return []
-        items = list(self._client.dataset(dataset_id).iterate_items())
-        return items
+        return [
+            map_actor_item(item)
+            for item in self._client.dataset(dataset_id).iterate_items()
+        ]
 
     def rank_results(self, results: list[dict]) -> list:
         """
@@ -274,9 +333,10 @@ class TokopediaProvider(MarketplaceProvider):
             if not dataset_id:
                 logger.warning("marketplace_run_no_dataset", queries=batch_list)
                 continue
-            items = list(
-                self._client.dataset(dataset_id).iterate_items()
-            )
+            items = [
+                map_actor_item(item)
+                for item in self._client.dataset(dataset_id).iterate_items()
+            ]
 
             self._assign_results_to_queries(batch_list, items, output)
 
@@ -293,21 +353,27 @@ class TokopediaProvider(MarketplaceProvider):
         output: dict[str, list[dict]],
     ) -> None:
         """
-        Route flat actor results back to the most relevant query.
+        Route flat actor results back to the originating query.
 
-        For each item, the product title is tokenised and compared against
-        each query's tokens.  The query with the highest word-overlap count
-        wins.  Ties are broken by position (first query wins).
+        Items mapped from the current actor schema carry the exact
+        search_query that produced them — use it when it matches one of
+        ours. Otherwise fall back to word-overlap between the product
+        title and each query (ties broken by position; first query wins).
 
         Args:
             queries: The queries that were sent in this batch.
-            items: Flat list of product dicts from the actor dataset.
+            items: Flat product dicts (already passed through map_actor_item).
             output: Mutable dict to append matched items into.
         """
         # Pre-tokenise queries once
         query_tokens = {q: set(q.lower().split()) for q in queries}
 
         for item in items:
+            actor_query = (item.get("search_query") or "").lower().strip()
+            if actor_query in output:
+                output[actor_query].append(item)
+                continue
+
             title = (item.get("name") or item.get("title") or "").lower()
             title_words = set(title.split())
 

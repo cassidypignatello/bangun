@@ -341,14 +341,14 @@ class TestTokopediaProviderSearchSync:
         assert run_input["includeReviews"] is False
         assert len(results) == 1
 
-    def test_search_sync_returns_raw_items(self):
-        """Should return raw items from the dataset"""
+    def test_search_sync_returns_mapped_items(self):
+        """Should return items mapped to the flat product shape"""
         from app.integrations.marketplace import TokopediaProvider
 
         mock_dataset = MagicMock()
         mock_dataset.iterate_items.return_value = [
-            {"name": "Product A", "price": 80000},
-            {"name": "Product B", "price": 90000},
+            {"name": "Product A", "price_idr": 80000},
+            {"name": "Product B", "price_idr": 90000},
         ]
 
         mock_actor = MagicMock()
@@ -629,3 +629,105 @@ class TestTokopediaProviderV3RunModel:
         results = provider.batch_search_sync(["granit", "semen"])
 
         assert results == {"granit": [], "semen": []}
+
+
+NESTED_ACTOR_ITEM = {
+    "product_core": {
+        "product_title": "Batako ukuran 37x17x7cm",
+        "product_status": "ACTIVE",
+    },
+    "pricing_and_inventory": {
+        "current_price": 3525000,
+        "stock_value": "17129",
+    },
+    "performance_and_flags": {
+        "rating": 4.9,
+        "sold_count": "100938",
+    },
+    "seller_and_platform_context": {
+        "shop_name": "Berkah Jaya Tk",
+        "shop_city": "Tangerang",
+    },
+    "search_listing_context": {
+        "search_query": "batako struktur kolam renang",
+        "listing_url": "https://www.tokopedia.com/berkah-jaya-tk-302/batako",
+    },
+}
+
+
+class TestMapActorItem:
+    """Tests for mapping the fatihtahta actor's nested schema to flat product dicts"""
+
+    def test_maps_nested_schema_to_flat_fields(self):
+        from app.integrations.marketplace import map_actor_item
+
+        flat = map_actor_item(NESTED_ACTOR_ITEM)
+
+        assert flat["name"] == "Batako ukuran 37x17x7cm"
+        assert flat["price_idr"] == 3525000
+        assert flat["shop"] == "Berkah Jaya Tk"
+        assert flat["location"] == "Tangerang"
+        assert flat["rating"] == 4.9
+        assert flat["sold_count"] == 100938
+        assert flat["stock"] == 17129
+        assert flat["status"] == "active"
+        assert flat["url"] == "https://www.tokopedia.com/berkah-jaya-tk-302/batako"
+        assert flat["search_query"] == "batako struktur kolam renang"
+
+    def test_passes_through_already_flat_items(self):
+        """Flat items (mock provider, legacy actor) pass through unchanged."""
+        from app.integrations.marketplace import map_actor_item
+
+        flat_in = {"name": "Semen", "price_idr": 65000, "rating": 4.5, "sold_count": 10}
+        assert map_actor_item(flat_in) == flat_in
+
+    def test_tolerates_missing_sections(self):
+        from app.integrations.marketplace import map_actor_item
+
+        flat = map_actor_item({"product_core": {"product_title": "X"}})
+        assert flat["name"] == "X"
+        assert flat["price_idr"] == 0
+        assert flat["rating"] is None
+        assert flat["sold_count"] == 0
+
+    def test_mapped_item_survives_ranking(self):
+        """Mapped items must pass rank_best_sellers' availability and price filters."""
+        from app.integrations.apify import rank_best_sellers
+        from app.integrations.marketplace import map_actor_item
+
+        ranked = rank_best_sellers([map_actor_item(NESTED_ACTOR_ITEM)])
+        assert len(ranked) == 1
+        assert ranked[0].product["price_idr"] == 3525000
+
+
+class TestAssignResultsPrefersActorQuery:
+    """Result routing should use the actor's own search_query when present"""
+
+    def test_routes_by_actor_search_query(self):
+        from app.integrations.marketplace import TokopediaProvider
+
+        mock_client = MagicMock()
+        with patch("app.integrations.marketplace.ApifyClient", return_value=mock_client):
+            provider = TokopediaProvider(apify_token="t")
+
+        output = {"granit lantai": [], "semen portland": []}
+        items = [
+            {"name": "Some unrelated title", "price_idr": 1, "search_query": "semen portland"},
+        ]
+        provider._assign_results_to_queries(["granit lantai", "semen portland"], items, output)
+
+        assert output["semen portland"] == items
+        assert output["granit lantai"] == []
+
+    def test_falls_back_to_word_overlap_without_query(self):
+        from app.integrations.marketplace import TokopediaProvider
+
+        mock_client = MagicMock()
+        with patch("app.integrations.marketplace.ApifyClient", return_value=mock_client):
+            provider = TokopediaProvider(apify_token="t")
+
+        output = {"granit lantai": [], "semen portland": []}
+        items = [{"name": "Granit Lantai 60x60 Premium", "price_idr": 1}]
+        provider._assign_results_to_queries(["granit lantai", "semen portland"], items, output)
+
+        assert output["granit lantai"] == items
