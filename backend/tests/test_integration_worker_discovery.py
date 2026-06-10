@@ -82,6 +82,8 @@ class TestWorkerDiscoveryFlow:
 
         # Verify WorkerPreview structure (name is masked with block chars)
         assert worker["preview_name"].startswith("B")  # "Bali Pool Builders" masked
+        assert "█" in worker["preview_name"]  # Name must actually be masked
+        assert worker["preview_name"] != "Bali Pool Builders"  # Full name must not leak
         assert worker["trust_score"]["total_score"] == 85
         assert worker["trust_score"]["trust_level"] == "HIGH"
         assert worker["contact_locked"] is True
@@ -223,6 +225,9 @@ class TestWorkerDiscoveryFlow:
         data = response.json()
         assert data["internal_status"] == "completed"
 
+        # The DB update must actually have been performed
+        mock_update_payment.assert_called_once()
+
     @pytest.mark.asyncio
     @patch("app.routes.workers_search.check_worker_unlock")
     @patch("app.routes.workers_search.get_worker_by_id")
@@ -328,7 +333,10 @@ class TestSearchCaching:
         # Verify cache hit
         assert data["status"] == "cache_hit"
         assert len(data["workers"]) == 1
-        assert data["workers"][0]["preview_name"].startswith("C")  # "Cached Pool Builder" masked
+        preview_name = data["workers"][0]["preview_name"]
+        assert preview_name.startswith("C")  # "Cached Pool Builder" masked
+        assert "█" in preview_name  # Name must actually be masked
+        assert preview_name != "Cached Pool Builder"  # Full name must not leak
 
         # Verify cache was checked
         mock_get_cached.assert_called_once()

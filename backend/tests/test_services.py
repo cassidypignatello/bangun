@@ -227,35 +227,56 @@ class TestTrustCalculator:
         """Should mask single name showing first char"""
         from app.services.trust_calculator import mask_worker_name
 
-        result = mask_worker_name("Wayan")
+        original_name = "Wayan"
+        result = mask_worker_name(original_name)
 
         assert result.startswith("W")
         assert len(result) > 1
+        assert result != original_name
+        assert "█" in result
 
     def test_mask_worker_name_two_names(self):
         """Should mask both name parts"""
         from app.services.trust_calculator import mask_worker_name
 
-        result = mask_worker_name("Ahmad Suryanto")
+        original_name = "Ahmad Suryanto"
+        result = mask_worker_name(original_name)
 
         # Both parts masked, first char of each preserved
         assert result.startswith("A")
         assert "S" in result
+        assert result != original_name
+        assert "█" in result
+        # Neither full name part may leak through
+        assert "Ahmad" not in result
+        assert "Suryanto" not in result
 
     def test_mask_worker_name_multiple_names(self):
         """Should mask all name parts"""
         from app.services.trust_calculator import mask_worker_name
 
-        result = mask_worker_name("Made Putra Wijaya")
+        original_name = "Made Putra Wijaya"
+        result = mask_worker_name(original_name)
 
         assert result.startswith("M")
         assert " " in result  # Multi-part name preserves spaces
+        assert result != original_name
+        assert "█" in result
+        # No full name part may leak through
+        assert "Made" not in result
+        assert "Putra" not in result
+        assert "Wijaya" not in result
 
     def test_mask_worker_name_with_whitespace(self):
         """Should handle extra whitespace"""
         from app.services.trust_calculator import mask_worker_name
 
-        result = mask_worker_name("  John Doe  ")
+        original_name = "  John Doe  "
+        result = mask_worker_name(original_name)
 
         assert result.startswith("J")
         assert len(result) > 0
+        assert result != original_name
+        assert result != original_name.strip()
+        assert "█" in result
+        assert "John" not in result
