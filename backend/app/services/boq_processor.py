@@ -106,7 +106,7 @@ EXISTING_PATTERNS = [
 # =============================================================================
 
 
-def _log_openai_usage(response, stage: str, **context) -> dict | None:
+def _log_openai_usage(response, stage: str, **context) -> Optional[dict]:
     """
     Extract token usage from an OpenAI response and emit a structured log line.
 
@@ -128,7 +128,10 @@ def _log_openai_usage(response, stage: str, **context) -> dict | None:
         "completion_tokens": getattr(usage, "completion_tokens", 0) or 0,
         "total_tokens": getattr(usage, "total_tokens", 0) or 0,
     }
-    logger.info("openai_token_usage", stage=stage, **context, **usage_dict)
+    try:
+        logger.info("openai_token_usage", stage=stage, **context, **usage_dict)
+    except Exception:
+        logger.warning("openai_token_usage_log_failed", stage=stage)
     return usage_dict
 
 
@@ -903,8 +906,6 @@ Be thorough - extract ALL items from ALL pages/sections. Indonesian terms:
                 "gpt4o_vision_batch_complete",
                 batch=batch_num,
                 items_count=len(data.get("items", [])),
-                prompt_tokens=response.usage.prompt_tokens,
-                completion_tokens=response.usage.completion_tokens,
             )
 
             # Extract metadata from first successful batch

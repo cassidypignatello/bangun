@@ -27,3 +27,11 @@ class TestLogOpenaiUsage:
         assert usage["prompt_tokens"] == 100
         assert usage["completion_tokens"] == 0
         assert usage["total_tokens"] == 0
+
+    def test_never_raises_on_context_collision(self):
+        """A colliding context key must not raise (helper runs in the extraction hot path)."""
+        response = SimpleNamespace(
+            usage=SimpleNamespace(prompt_tokens=1, completion_tokens=2, total_tokens=3)
+        )
+        usage = _log_openai_usage(response, stage="test_stage", total_tokens=999)
+        assert usage == {"prompt_tokens": 1, "completion_tokens": 2, "total_tokens": 3}
