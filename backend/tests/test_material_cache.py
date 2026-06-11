@@ -1027,3 +1027,104 @@ class TestMapActorItem:
                         # Must have a valid price — not 0 (the pre-fix failure mode)
                         assert result[0]["price_idr"] == 120000
                         assert result[0]["name"] == "Granit Lantai 60x60"
+
+
+# =============================================================================
+# F13: Stale-cache freshness gate (semantic_matcher)
+# =============================================================================
+
+
+class TestStaleCacheFreshnessGate:
+    """
+    Verify that seeded/stale rows (NULL or old price_updated_at) are NOT
+    served as fresh-cache hits with 100% confidence.
+    """
+
+    @pytest.mark.asyncio
+    async def test_fresh_row_returns_cached_source_full_confidence(self):
+        """A row with price_updated_at within 7 days gets source='cached', confidence=1.0."""
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import MagicMock, patch
+
+        fresh_ts = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+        mock_row = {
+            "id": "mat-fresh",
+            "name_id": "Semen Tiga Roda 40kg",
+            "name_en": "Cement 40kg",
+            "price_avg": 85000,
+            "price_updated_at": fresh_ts,
+            "normalized_name": "semen tiga roda 40kg",
+            "tokopedia_affiliate_url": None,
+        }
+
+        mock_response = MagicMock()
+        mock_response.data = [mock_row]
+
+        with patch("app.services.semantic_matcher.get_supabase_client") as mock_client:
+            mock_client.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = mock_response
+
+            from app.services.semantic_matcher import find_exact_match
+
+            result = await find_exact_match("semen tiga roda 40kg")
+
+        assert result is not None
+        assert result["source"] == "cached"
+        assert result["confidence"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_stale_row_returns_stale_cache_source_reduced_confidence(self):
+        """A row with price_updated_at > 7 days ago gets source='stale_cache', confidence=0.5."""
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import MagicMock, patch
+
+        stale_ts = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+        mock_row = {
+            "id": "mat-stale",
+            "name_id": "Granit Lantai 60x60",
+            "price_avg": 75000,
+            "price_updated_at": stale_ts,
+            "normalized_name": "granit lantai 60x60",
+            "tokopedia_affiliate_url": None,
+        }
+
+        mock_response = MagicMock()
+        mock_response.data = [mock_row]
+
+        with patch("app.services.semantic_matcher.get_supabase_client") as mock_client:
+            mock_client.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = mock_response
+
+            from app.services.semantic_matcher import find_exact_match
+
+            result = await find_exact_match("granit lantai 60x60")
+
+        assert result is not None
+        assert result["source"] == "stale_cache"
+        assert result["confidence"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_null_price_updated_at_returns_stale_cache(self):
+        """A seeded row with price_updated_at=NULL gets source='stale_cache', confidence=0.5."""
+        from unittest.mock import MagicMock, patch
+
+        mock_row = {
+            "id": "mat-seeded",
+            "name_id": "Cat Tembok Dulux 5L",
+            "price_avg": 120000,
+            "price_updated_at": None,  # Seeded row — no real scrape date
+            "normalized_name": "cat tembok dulux 5l",
+            "tokopedia_affiliate_url": None,
+        }
+
+        mock_response = MagicMock()
+        mock_response.data = [mock_row]
+
+        with patch("app.services.semantic_matcher.get_supabase_client") as mock_client:
+            mock_client.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = mock_response
+
+            from app.services.semantic_matcher import find_exact_match
+
+            result = await find_exact_match("cat tembok dulux 5l")
+
+        assert result is not None
+        assert result["source"] == "stale_cache"
+        assert result["confidence"] == 0.5

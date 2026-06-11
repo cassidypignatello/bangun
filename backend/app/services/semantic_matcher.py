@@ -2,11 +2,39 @@
 Two-tier semantic matching for materials: exact match + fuzzy matching
 """
 
+from datetime import datetime, timedelta, timezone
 from difflib import SequenceMatcher
 
 from app.integrations.openai_client import enhance_material_description
 from app.integrations.supabase import get_supabase_client, search_materials
 from app.utils.text import normalize_material_name
+
+# Rows with price_updated_at older than this (or NULL) are seeded/stale.
+# They may still be used as a last-resort fallback, but must carry
+# reduced confidence and a distinct source label.
+_CACHE_TTL_DAYS = 7
+_STALE_CONFIDENCE = 0.5
+_STALE_SOURCE = "stale_cache"
+
+
+def _is_price_fresh(entry: dict) -> bool:
+    """Return True if the row's price_updated_at is within the TTL window."""
+    price_updated_at = entry.get("price_updated_at")
+    if not price_updated_at:
+        return False
+    try:
+        if isinstance(price_updated_at, str):
+            updated_at = datetime.fromisoformat(
+                price_updated_at.replace("Z", "+00:00")
+            )
+        else:
+            updated_at = price_updated_at
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=timezone.utc)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=_CACHE_TTL_DAYS)
+        return updated_at > cutoff
+    except (ValueError, TypeError):
+        return False
 
 
 def calculate_similarity(str1: str, str2: str) -> float:
@@ -60,13 +88,18 @@ async def find_exact_match(material_name: str) -> dict | None:
                 # Verify price data exists
                 price_avg = entry.get("price_avg", 0) or 0
                 if price_avg > 0:
+                    fresh = _is_price_fresh(entry)
                     return {
                         "material_name": get_material_display_name(entry),
                         "unit_price_idr": int(
                             price_avg
                         ),  # Convert Decimal/float to int for Pydantic
-                        "source": "cached",  # Clear indicator of cache hit
-                        "confidence": 1.0,  # Exact normalized match = perfect confidence
+                        # Fresh rows: exact match = high confidence.
+                        # Stale/seeded rows (NULL or old price_updated_at): reduced
+                        # confidence and a distinct source label so callers can
+                        # distinguish them from live-scrape or fresh-cache results.
+                        "source": "cached" if fresh else _STALE_SOURCE,
+                        "confidence": 1.0 if fresh else _STALE_CONFIDENCE,
                         # Use actual product URL if available, not just search term
                         "marketplace_url": entry.get("tokopedia_affiliate_url"),
                     }
