@@ -60,9 +60,9 @@ export interface BoQItemPriced {
 
 export interface BoQSummary {
   contractor_total: number;
-  market_estimate: number;
-  potential_savings: number;
-  savings_percent: number;
+  market_estimate: number | null;
+  potential_savings: number | null;
+  savings_percent: number | null;
   total_items: number;
   materials_count: number;
   labor_count: number;
@@ -86,6 +86,7 @@ export interface BoQAnalysisResults {
   overpriced_items: BoQItemPriced[];
   all_materials: BoQItemPriced[];
   labor_items: BoQItemPriced[];
+  extraction_warnings: string[];
   completed_at?: string;
 }
 

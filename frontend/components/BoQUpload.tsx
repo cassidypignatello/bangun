@@ -100,6 +100,7 @@ export function BoQUpload() {
     const response = await boqApi.getStatus(jobId);
 
     if (response.error) {
+      console.error('[BoQ] Status poll error:', response.error.message, response.error.details);
       setError(response.error.message);
       setState('failed');
       if (pollIntervalRef.current) {
@@ -120,6 +121,7 @@ export function BoQUpload() {
       // Fetch full results
       const resultsResponse = await boqApi.getResults(jobId);
       if (resultsResponse.error) {
+        console.error('[BoQ] Results fetch error:', resultsResponse.error.message, resultsResponse.error.details);
         setError(resultsResponse.error.message);
         setState('failed');
       } else {
@@ -130,6 +132,7 @@ export function BoQUpload() {
       if (pollIntervalRef.current) {
         clearInterval(pollIntervalRef.current);
       }
+      console.error('[BoQ] Processing failed:', status.error_message);
       setError(status.error_message || 'Processing failed');
       setState('failed');
     }
@@ -145,6 +148,7 @@ export function BoQUpload() {
     const response = await boqApi.uploadFile(selectedFile);
 
     if (response.error) {
+      console.error('[BoQ] Upload error:', response.error.message, response.error.details);
       setError(response.error.message);
       setState('failed');
       return;
@@ -181,6 +185,17 @@ export function BoQUpload() {
   if (state === 'completed' && results) {
     return (
       <div className="space-y-6">
+        {/* Extraction warnings */}
+        {results.extraction_warnings.length > 0 && (
+          <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <span aria-hidden="true">⚠️</span>
+            <span>
+              Some pages could not be fully read — totals may be incomplete.
+              {' '}({results.extraction_warnings.length} {results.extraction_warnings.length === 1 ? 'issue' : 'issues'})
+            </span>
+          </div>
+        )}
+
         {/* Summary Header */}
         <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-lg p-6 border border-green-200">
           <div className="flex items-center justify-between mb-4">
@@ -213,18 +228,34 @@ export function BoQUpload() {
             </div>
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <div className="text-sm text-gray-500">Market Estimate</div>
-              <div className="text-lg font-semibold text-blue-600">
-                {formatPrice(results.summary.market_estimate)}
-              </div>
+              {results.summary.market_estimate != null ? (
+                <div className="text-lg font-semibold text-blue-600">
+                  {formatPrice(results.summary.market_estimate)}
+                </div>
+              ) : (
+                <>
+                  <div className="text-lg font-semibold text-gray-400">—</div>
+                  <div className="text-xs text-gray-400">Not enough market data</div>
+                </>
+              )}
             </div>
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <div className="text-sm text-gray-500">Potential Savings</div>
-              <div className="text-lg font-semibold text-green-600">
-                {formatPrice(results.summary.potential_savings)}
-                <span className="text-sm font-normal ml-1">
-                  ({results.summary.savings_percent.toFixed(1)}%)
-                </span>
-              </div>
+              {results.summary.potential_savings != null ? (
+                <div className="text-lg font-semibold text-green-600">
+                  {formatPrice(results.summary.potential_savings)}
+                  {results.summary.savings_percent != null && (
+                    <span className="text-sm font-normal ml-1">
+                      ({results.summary.savings_percent.toFixed(1)}%)
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="text-lg font-semibold text-gray-400">—</div>
+                  <div className="text-xs text-gray-400">Not enough market data</div>
+                </>
+              )}
             </div>
             <div className="bg-white rounded-lg p-4 shadow-sm">
               <div className="text-sm text-gray-500">Items Analyzed</div>
@@ -313,7 +344,13 @@ export function BoQUpload() {
           ref={fileInputRef}
           type="file"
           accept=".pdf,.xlsx,.xls"
-          onChange={(e) => e.target.files?.[0] && handleFileSelect(e.target.files[0])}
+          onChange={(e) => {
+            if (e.target.files?.[0]) {
+              handleFileSelect(e.target.files[0]);
+            }
+            // Clear so re-selecting the same file triggers onChange next time
+            e.target.value = '';
+          }}
           className="hidden"
         />
 
@@ -363,7 +400,9 @@ export function BoQUpload() {
           <>
             <div className="text-5xl mb-4">❌</div>
             <p className="text-red-700 font-medium">Upload Failed</p>
-            <p className="text-red-600 text-sm mt-1">{error}</p>
+            <p className="text-red-600 text-sm mt-1">
+              We couldn&apos;t process this file. Please try again, or contact us if it keeps happening.
+            </p>
           </>
         )}
       </div>
