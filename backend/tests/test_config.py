@@ -59,9 +59,9 @@ class TestBoqExtractionModelSetting:
     """Tests for the configurable BoQ extraction model"""
 
     def test_boq_extraction_model_default(self):
-        """boq_extraction_model defaults to gpt-4o"""
+        """boq_extraction_model defaults to gpt-5.4-mini (Phase 1 accuracy/cost evidence)"""
         settings = Settings(**REQUIRED_SETTINGS)
-        assert settings.boq_extraction_model == "gpt-4o"
+        assert settings.boq_extraction_model == "gpt-5.4-mini"
 
     def test_boq_extraction_model_env_override(self, monkeypatch):
         """boq_extraction_model can be overridden via environment variable"""
