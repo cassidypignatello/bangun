@@ -35,7 +35,7 @@ export const workersApi = {
 
   /**
    * Get full worker details (requires unlock via payment)
-   * GET /workers/{id}/detail
+   * GET /workers/{id}/details
    */
   getDetails: async (
     workerId: string

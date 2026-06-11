@@ -21,6 +21,11 @@ export function PaymentModal({
 }: PaymentModalProps) {
   const { loading, error, initiateUnlock } = usePayment();
   const [selectedMethod, setSelectedMethod] = useState<PaymentMethod | null>(null);
+  // Buyer email: identifies the user for unlock-status checks (interim
+  // identity mechanism until real auth — persisted by initiateUnlock).
+  const [email, setEmail] = useState('');
+
+  const emailValid = /^\S+@\S+\.\S+$/.test(email.trim());
 
   const formatPrice = (priceIdr: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -31,8 +36,8 @@ export function PaymentModal({
   };
 
   const handlePayment = async () => {
-    if (!selectedMethod) return;
-    await initiateUnlock(workerId, selectedMethod);
+    if (!selectedMethod || !emailValid) return;
+    await initiateUnlock(workerId, selectedMethod, email.trim());
   };
 
   if (!isOpen) return null;
@@ -93,6 +98,27 @@ export function PaymentModal({
                 All reviews and portfolio photos
               </li>
             </ul>
+          </div>
+
+          {/* Buyer Email */}
+          <div className="mb-6">
+            <label
+              htmlFor="unlock-email"
+              className="block font-semibold text-gray-900 mb-2"
+            >
+              Your Email:
+            </label>
+            <input
+              id="unlock-email"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="you@example.com"
+              className="w-full px-4 py-3 border-2 border-gray-200 rounded-lg focus:border-blue-500 focus:outline-none"
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              Used to link this unlock to you so you can access the details later.
+            </p>
           </div>
 
           {/* Payment Method Selection */}
@@ -214,7 +240,7 @@ export function PaymentModal({
             </button>
             <button
               onClick={handlePayment}
-              disabled={!selectedMethod || loading}
+              disabled={!selectedMethod || !emailValid || loading}
               className="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
             >
               {loading ? 'Processing...' : 'Continue to Payment'}

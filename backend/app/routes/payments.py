@@ -4,6 +4,7 @@ Payment processing and webhook endpoints
 
 from datetime import datetime
 
+import structlog
 from fastapi import APIRouter, HTTPException, Query, Request, status
 
 from app.config import get_settings
@@ -18,22 +19,26 @@ from app.schemas.payment import MidtransWebhook, UnlockRequest, UnlockResponse
 
 router = APIRouter()
 
+logger = structlog.get_logger()
+
 
 @router.get("/unlock/status", status_code=status.HTTP_200_OK)
 @limiter.limit(STANDARD_LIMIT)
 async def check_unlock_status(
     request: Request,
     worker_id: str = Query(..., description="Worker ID to check unlock status for"),
+    user_email: str = Query(..., description="User email for unlock verification"),
 ):
     """
-    Check whether the current user has unlocked a worker's contact details.
+    Check whether a specific user has unlocked a worker's contact details.
 
-    The frontend passes only worker_id; user identity is resolved server-side
-    (via session / JWT) in production. For now, we query worker_unlocks by
-    worker_id and return the most recent unlock record if any exists.
+    Both worker_id and user_email are required — unlock records are scoped
+    per user (mirroring GET /workers/{id}/details), so one user's payment
+    never unlocks the worker for anyone else.
 
     Args:
         worker_id: Worker to check.
+        user_email: Email identifying the requesting user.
 
     Returns:
         dict: {unlocked: bool, unlocked_at: str | None}
@@ -44,6 +49,7 @@ async def check_unlock_status(
             supabase.table("worker_unlocks")
             .select("*")
             .eq("worker_id", worker_id)
+            .eq("user_email", user_email)
             .order("unlocked_at", desc=True)
             .limit(1)
             .execute()
@@ -56,10 +62,13 @@ async def check_unlock_status(
                 "ok": True,
             }
         return {"unlocked": False, "unlocked_at": None, "ok": True}
-    except Exception as e:
+    except Exception:
+        logger.error(
+            "unlock_status_lookup_failed", worker_id=worker_id, exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unlock status lookup failed: {str(e)}",
+            detail="Unlock status lookup failed",
         )
 
 
