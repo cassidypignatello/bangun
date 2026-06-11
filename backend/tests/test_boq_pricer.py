@@ -103,6 +103,16 @@ class TestNormalizeMaterialName:
         # 'lantai 2' should be removed
         assert "lantai 2" not in result.lower()
 
+    def test_keeps_dimension_after_lantai(self):
+        """'Lantai 60x60' is a dimension token, not a floor number — must be preserved."""
+        assert normalize_material_name("Granit Lantai 60x60") == "granit lantai 60x60"
+
+    def test_still_strips_floor_numbers(self):
+        """Floor specifiers like 'Lantai 2' without a dimension must still be removed."""
+        result = normalize_material_name("Granit Lantai 2 Premium")
+        assert "lantai 2" not in result
+        assert "premium" in result
+
     def test_removes_area_specifier(self):
         """Should remove 'area <word>' specifier."""
         result = normalize_material_name("Cat Tembok Area Kamar")

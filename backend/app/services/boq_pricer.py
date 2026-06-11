@@ -77,7 +77,7 @@ def normalize_material_name(description: str) -> str:
     result = re.sub(r"master\s*bed\s*room", "", result, flags=re.IGNORECASE)
     result = re.sub(r"master\s*bathroom", "", result, flags=re.IGNORECASE)
     result = re.sub(r"living\s*dining\s*kitchen", "", result, flags=re.IGNORECASE)
-    result = re.sub(r"lantai\s*\d+", "", result, flags=re.IGNORECASE)
+    result = re.sub(r"lantai\s*(?!\d+x\d)(?!\d+\s*x\s*\d)\d+", "", result, flags=re.IGNORECASE)
     result = re.sub(r"area\s+\w+", "", result, flags=re.IGNORECASE)
 
     # Clean up
