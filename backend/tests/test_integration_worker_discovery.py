@@ -22,6 +22,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.schemas.payment import PaymentMethod
+from tests.conftest import API_PREFIX
 
 
 class TestWorkerDiscoveryFlow:
@@ -65,7 +66,7 @@ class TestWorkerDiscoveryFlow:
 
         # Search for pool workers
         response = self.client.post(
-            "/api/v1/workers/search",
+            f"{API_PREFIX}/workers/search",
             json={
                 "project_type": "pool",
                 "location": "Bali",
@@ -117,7 +118,7 @@ class TestWorkerDiscoveryFlow:
 
         # Get worker detail
         response = self.client.get(
-            f"/api/v1/workers/{worker_id}/details",
+            f"{API_PREFIX}/workers/{worker_id}/details",
             params={"user_email": self.test_email},
         )
 
@@ -156,7 +157,7 @@ class TestWorkerDiscoveryFlow:
 
         # Initiate unlock payment
         response = self.client.post(
-            "/api/v1/unlock",
+            f"{API_PREFIX}/unlock",
             json={
                 "worker_id": worker_id,
                 "payment_method": PaymentMethod.CREDIT_CARD.value,
@@ -205,7 +206,7 @@ class TestWorkerDiscoveryFlow:
             mock_settings.return_value.midtrans_server_key = server_key
 
             response = self.client.post(
-                "/api/v1/webhooks/midtrans",
+                f"{API_PREFIX}/webhooks/midtrans",
                 json={
                     "transaction_time": "2025-12-03 12:00:00",
                     "transaction_status": "settlement",
@@ -270,7 +271,7 @@ class TestWorkerDiscoveryFlow:
 
         # Get worker detail
         response = self.client.get(
-            f"/api/v1/workers/{worker_id}/details",
+            f"{API_PREFIX}/workers/{worker_id}/details",
             params={"user_email": self.test_email},
         )
 
@@ -320,7 +321,7 @@ class TestSearchCaching:
 
         # Search should use cached data
         response = self.client.post(
-            "/api/v1/workers/search",
+            f"{API_PREFIX}/workers/search",
             json={
                 "project_type": "pool",
                 "location": "Bali",
@@ -355,7 +356,7 @@ class TestSearchCaching:
 
         # Search triggers background scraping
         response = self.client.post(
-            "/api/v1/workers/search",
+            f"{API_PREFIX}/workers/search",
             json={
                 "project_type": "pool",
                 "location": "Bali",
@@ -392,7 +393,7 @@ class TestPaymentEdgeCases:
         mock_snap.create_transaction.side_effect = Exception("Midtrans API error")
 
         response = self.client.post(
-            "/api/v1/unlock",
+            f"{API_PREFIX}/unlock",
             json={
                 "worker_id": "worker-1",
                 "payment_method": PaymentMethod.CREDIT_CARD.value,
@@ -414,7 +415,7 @@ class TestPaymentEdgeCases:
             mock_settings.return_value.midtrans_server_key = "test-server-key"
 
             response = self.client.post(
-                "/api/v1/webhooks/midtrans",
+                f"{API_PREFIX}/webhooks/midtrans",
                 json={
                     "transaction_time": "2025-12-03 12:00:00",
                     "transaction_status": "settlement",
@@ -457,7 +458,7 @@ class TestPaymentEdgeCases:
             mock_settings.return_value.midtrans_server_key = server_key
 
             response = self.client.post(
-                "/api/v1/webhooks/midtrans",
+                f"{API_PREFIX}/webhooks/midtrans",
                 json={
                     "transaction_time": "2025-12-03 12:00:00",
                     "transaction_status": "settlement",

@@ -7,6 +7,9 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
+# Shared route prefix for all versioned API endpoints
+API_PREFIX = "/api/v1"
+
 
 @pytest.fixture
 def client():
