@@ -40,6 +40,6 @@ export const workersApi = {
   getDetails: async (
     workerId: string
   ): Promise<ApiResponse<WorkerFullDetails>> => {
-    return apiClient.get<WorkerFullDetails>(`/workers/${workerId}/detail`);
+    return apiClient.get<WorkerFullDetails>(`/workers/${workerId}/details`);
   },
 };
