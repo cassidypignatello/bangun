@@ -304,11 +304,17 @@ async def get_boq_results(request: Request, job_id: str):
             if diff_percent and diff_percent > 10:
                 overpriced_items.append(item)
 
-    # Calculate summary
+    # Calculate summary — keep None for unpriced fields so UI can distinguish
+    # "zero savings" from "not priced yet"
     contractor_total = job.get("contractor_total") or 0
-    market_estimate = job.get("market_estimate") or 0
-    potential_savings = job.get("potential_savings") or 0
-    savings_percent = (potential_savings / contractor_total * 100) if contractor_total > 0 else 0
+    market_estimate = job.get("market_estimate")
+    potential_savings = job.get("potential_savings")
+    if market_estimate is not None and potential_savings is not None and contractor_total > 0:
+        savings_percent: Optional[float] = round(
+            float(potential_savings) / float(contractor_total) * 100, 1
+        )
+    else:
+        savings_percent = None
 
     priced_count = sum(1 for item in all_materials if item.get("tokopedia_price"))
 
@@ -327,7 +333,7 @@ async def get_boq_results(request: Request, job_id: str):
             contractor_total=contractor_total,
             market_estimate=market_estimate,
             potential_savings=potential_savings,
-            savings_percent=round(savings_percent, 1),
+            savings_percent=savings_percent,
             total_items=job.get("total_items_extracted", 0),
             materials_count=job.get("materials_count", 0),
             labor_count=job.get("labor_count", 0),

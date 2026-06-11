@@ -149,9 +149,9 @@ class BoQSummary(BaseModel):
     """High-level summary of BoQ analysis."""
 
     contractor_total: Decimal = Field(..., description="Total from contractor's BoQ")
-    market_estimate: Decimal = Field(..., description="Estimated market total for materials")
-    potential_savings: Decimal = Field(..., description="Potential savings (contractor - market)")
-    savings_percent: float = Field(..., description="Savings as percentage")
+    market_estimate: Optional[Decimal] = Field(None, description="Estimated market total for materials; null when no items were priced")
+    potential_savings: Optional[Decimal] = Field(None, description="Potential savings (contractor - market); null when no items were priced")
+    savings_percent: Optional[float] = Field(None, description="Savings as percentage; null when no items were priced")
 
     total_items: int = Field(..., description="Total items extracted")
     materials_count: int = Field(..., description="Items classified as materials")
