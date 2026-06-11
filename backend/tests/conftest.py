@@ -2,6 +2,11 @@
 Pytest configuration and shared fixtures for testing
 """
 
+import os
+
+# Tests must never emit to Sentry, regardless of .env contents.
+os.environ["SENTRY_DSN"] = ""
+
 import pytest
 from fastapi.testclient import TestClient
 
