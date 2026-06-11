@@ -24,7 +24,7 @@ from typing import Iterator
 import structlog
 from apify_client import ApifyClient
 
-from app.integrations.apify import get_run_dataset_id, rank_best_sellers
+from app.integrations.apify import get_run_dataset_id, map_actor_item, rank_best_sellers
 
 logger = structlog.get_logger()
 
@@ -110,63 +110,6 @@ class MaterialPriceMatch:
     price_difference: Decimal | None
     price_difference_pct: float | None
     from_cache: bool
-
-
-# =============================================================================
-# Actor Item Mapping
-# =============================================================================
-
-
-def _to_int(value) -> int:
-    """Parse ints that may arrive as strings ('100938') or be absent."""
-    try:
-        return int(str(value))
-    except (TypeError, ValueError):
-        return 0
-
-
-def map_actor_item(raw: dict) -> dict:
-    """
-    Map a fatihtahta/tokopedia-scraper item to the flat product shape the
-    ranking pipeline expects.
-
-    The actor's 2026 schema nests fields under product_core,
-    pricing_and_inventory, performance_and_flags, seller_and_platform_context,
-    and search_listing_context. Items that are already flat (mock provider,
-    legacy actor output with a price_idr key) pass through unchanged.
-
-    Args:
-        raw: One dataset item from the actor.
-
-    Returns:
-        Flat dict with name, price_idr, url, shop, location, rating,
-        sold_count, stock, status, and search_query (the actor-reported
-        originating query, used for result routing).
-    """
-    if "price_idr" in raw:
-        return raw
-
-    core = raw.get("product_core") or {}
-    pricing = raw.get("pricing_and_inventory") or {}
-    perf = raw.get("performance_and_flags") or {}
-    seller = raw.get("seller_and_platform_context") or {}
-    listing = raw.get("search_listing_context") or {}
-    compat = raw.get("compatibility") or {}
-
-    rating = perf.get("rating")
-
-    return {
-        "name": core.get("product_title") or "",
-        "price_idr": _to_int(pricing.get("current_price")),
-        "url": listing.get("listing_url") or "",
-        "shop": seller.get("shop_name") or "",
-        "location": seller.get("shop_city") or "",
-        "rating": float(rating) if rating is not None else None,
-        "sold_count": _to_int(perf.get("sold_count")),
-        "stock": _to_int(pricing.get("stock_value")),
-        "status": (core.get("product_status") or "active").lower(),
-        "search_query": listing.get("search_query") or compat.get("legacy_source") or "",
-    }
 
 
 # =============================================================================

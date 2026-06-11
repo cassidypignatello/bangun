@@ -537,6 +537,62 @@ def _extract_sold_count(item: dict) -> int:
     return 0
 
 
+def _to_int(value) -> int:
+    """Parse ints that may arrive as strings ('100938') or be absent."""
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return 0
+
+
+def map_actor_item(raw: dict) -> dict:
+    """
+    Map a fatihtahta/tokopedia-scraper item to the flat product shape the
+    ranking pipeline expects.
+
+    The actor's 2026 schema nests fields under product_core,
+    pricing_and_inventory, performance_and_flags, seller_and_platform_context,
+    and search_listing_context. Items that are NOT nested (mock provider,
+    legacy actor output without a product_core key) pass through unchanged so
+    the existing _extract_price / _extract_rating / _extract_sold_count helpers
+    can consume them.
+
+    Args:
+        raw: One dataset item from the actor.
+
+    Returns:
+        Flat dict with name, price_idr, url, shop, location, rating,
+        sold_count, stock, status, and search_query (the actor-reported
+        originating query, used for result routing) — or the original dict
+        when it is already flat.
+    """
+    if "product_core" not in raw:
+        # Already flat (legacy actor output, mock provider, or price_idr dict)
+        return raw
+
+    core = raw.get("product_core") or {}
+    pricing = raw.get("pricing_and_inventory") or {}
+    perf = raw.get("performance_and_flags") or {}
+    seller = raw.get("seller_and_platform_context") or {}
+    listing = raw.get("search_listing_context") or {}
+    compat = raw.get("compatibility") or {}
+
+    rating = perf.get("rating")
+
+    return {
+        "name": core.get("product_title") or "",
+        "price_idr": _to_int(pricing.get("current_price")),
+        "url": listing.get("listing_url") or "",
+        "shop": seller.get("shop_name") or "",
+        "location": seller.get("shop_city") or "",
+        "rating": float(rating) if rating is not None else None,
+        "sold_count": _to_int(perf.get("sold_count")),
+        "stock": _to_int(pricing.get("stock_value")),
+        "status": (core.get("product_status") or "active").lower(),
+        "search_query": listing.get("search_query") or compat.get("legacy_source") or "",
+    }
+
+
 def _build_tokopedia_search_url(material_name: str) -> str:
     """
     Build Tokopedia search URL from material name.
@@ -849,15 +905,22 @@ async def scrape_tokopedia_prices(
 
         # Fetch results from dataset
         results = []
-        for item in client.dataset(dataset_id).iterate_items():
-            # Extract price - supports multiple Tokopedia actor formats
-            price_idr = _extract_price(item)
+        for raw_item in client.dataset(dataset_id).iterate_items():
+            # Normalise nested 2026 actor schema → flat shape before extraction.
+            # Items already in the flat shape (legacy format, mock) are returned
+            # unchanged so the extractors below still work on them.
+            item = map_actor_item(raw_item)
 
-            # Extract rating - supports both string and float formats
-            rating = _extract_rating(item)
+            # Price: use price_idr when already set by map_actor_item (2026 schema
+            # and mock items); fall back to _extract_price for legacy flat items
+            # that carry price/priceInt instead.
+            price_idr = item.get("price_idr") or _extract_price(item)
 
-            # Extract sold count - supports multiple formats
-            sold_count = _extract_sold_count(item)
+            # Rating and sold_count: map_actor_item populates these keys for
+            # 2026-schema items.  _extract_rating/_extract_sold_count handle
+            # the remaining legacy field names (rating_average, sold, soldCount…).
+            rating = item.get("rating") if item.get("rating") is not None else _extract_rating(item)
+            sold_count = item.get("sold_count") or _extract_sold_count(item)
 
             # Extract seller name - handle both dict and string formats
             # Some actors return {"shop": {"name": "..."}} others return {"shop": "..."} or {"seller": "..."}

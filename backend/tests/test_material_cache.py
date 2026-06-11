@@ -886,3 +886,144 @@ class TestBestSellerScoring:
 
         ranked = rank_best_sellers(products, top_n=5)
         assert ranked == []
+
+
+class TestMapActorItem:
+    """Regression tests for map_actor_item — F12 audit fix.
+
+    Verifies that the 2026 nested actor schema is correctly flattened so the
+    legacy extraction helpers in the live-scrape tier receive the flat shape
+    they expect.
+    """
+
+    NESTED_FIXTURE = {
+        "product_core": {
+            "product_title": "Semen Tiga Roda 40kg",
+            "product_status": "active",
+        },
+        "pricing_and_inventory": {
+            "current_price": "85000",
+            "stock_value": "50",
+        },
+        "performance_and_flags": {
+            "rating": 4.8,
+            "sold_count": "500",
+        },
+        "seller_and_platform_context": {
+            "shop_name": "Toko Bangunan Jaya",
+            "shop_city": "Denpasar",
+        },
+        "search_listing_context": {
+            "listing_url": "https://tokopedia.com/product/123",
+            "search_query": "semen 40kg",
+        },
+    }
+
+    def test_maps_nested_schema_to_flat(self):
+        """Should map 2026 nested actor schema to flat product dict."""
+        from app.integrations.apify import map_actor_item
+
+        result = map_actor_item(self.NESTED_FIXTURE)
+
+        assert result["name"] == "Semen Tiga Roda 40kg"
+        assert result["price_idr"] == 85000
+        assert result["url"] == "https://tokopedia.com/product/123"
+        assert result["shop"] == "Toko Bangunan Jaya"
+        assert result["location"] == "Denpasar"
+        assert result["rating"] == 4.8
+        assert result["sold_count"] == 500
+        assert result["stock"] == 50
+        assert result["status"] == "active"
+        assert result["search_query"] == "semen 40kg"
+
+    def test_passes_flat_item_through_unchanged(self):
+        """Should return already-flat items unmodified (price_idr present)."""
+        from app.integrations.apify import map_actor_item
+
+        flat = {
+            "name": "Already Flat",
+            "price_idr": 100000,
+            "url": "https://tokopedia.com/flat",
+            "rating": 4.5,
+        }
+        result = map_actor_item(flat)
+        assert result is flat
+
+    def test_handles_missing_nested_sections(self):
+        """Should not raise when optional nested sections are absent."""
+        from app.integrations.apify import map_actor_item
+
+        sparse = {
+            "product_core": {"product_title": "Sparse Product"},
+        }
+        result = map_actor_item(sparse)
+
+        assert result["name"] == "Sparse Product"
+        assert result["price_idr"] == 0
+        assert result["url"] == ""
+        assert result["rating"] is None
+        assert result["sold_count"] == 0
+
+    def test_mapped_flat_item_carries_price_idr_rating_sold_count(self):
+        """map_actor_item output carries price_idr, rating, sold_count for live loop."""
+        from app.integrations.apify import map_actor_item
+
+        flat = map_actor_item(self.NESTED_FIXTURE)
+
+        # The live-scrape loop reads these keys directly from the mapped dict
+        assert flat["price_idr"] == 85000
+        assert flat["rating"] == 4.8
+        assert flat["sold_count"] == 500
+
+    def test_marketplace_reexport_works(self):
+        """map_actor_item imported from marketplace still resolves (re-export)."""
+        from app.integrations.marketplace import map_actor_item as mp_map_actor_item
+        from app.integrations.apify import map_actor_item as ap_map_actor_item
+
+        # Both names must resolve to the same callable
+        assert mp_map_actor_item is ap_map_actor_item
+
+    def test_live_scrape_loop_applies_mapping_for_nested_item(self):
+        """scrape_tokopedia_prices should return valid price for nested-schema item."""
+        import pytest
+        from unittest.mock import MagicMock, patch, AsyncMock
+
+        nested_item = {
+            "product_core": {"product_title": "Granit Lantai 60x60", "product_status": "active"},
+            "pricing_and_inventory": {"current_price": "120000", "stock_value": "100"},
+            "performance_and_flags": {"rating": 4.5, "sold_count": "200"},
+            "seller_and_platform_context": {"shop_name": "Toko Granit", "shop_city": "Bali"},
+            "search_listing_context": {"listing_url": "https://tokopedia.com/granit/1", "search_query": "granit 60x60"},
+        }
+
+        with patch("app.utils.cache.price_scrape_cache") as mock_cache:
+            mock_cache.get = AsyncMock(return_value=None)
+            mock_cache.set = AsyncMock()
+
+            with patch("app.integrations.supabase.get_cached_material_price") as mock_db_cache:
+                mock_db_cache.return_value = None
+
+                with patch("app.integrations.supabase.save_material_price_cache") as mock_save:
+                    mock_save.return_value = "new-mat-999"
+
+                    with patch("app.integrations.apify.get_apify_client") as mock_apify:
+                        mock_actor = MagicMock()
+                        mock_actor.call.return_value = {"defaultDatasetId": "dataset-xyz"}
+
+                        mock_dataset = MagicMock()
+                        mock_dataset.iterate_items.return_value = [nested_item]
+
+                        mock_client = MagicMock()
+                        mock_client.actor.return_value = mock_actor
+                        mock_client.dataset.return_value = mock_dataset
+                        mock_apify.return_value = mock_client
+
+                        import asyncio
+                        from app.integrations.apify import scrape_tokopedia_prices
+
+                        result = asyncio.run(scrape_tokopedia_prices("granit 60x60"))
+
+                        assert len(result) == 1
+                        # Must have a valid price — not 0 (the pre-fix failure mode)
+                        assert result[0]["price_idr"] == 120000
+                        assert result[0]["name"] == "Granit Lantai 60x60"
