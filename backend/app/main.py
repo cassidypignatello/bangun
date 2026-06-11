@@ -3,6 +3,7 @@ FastAPI application entry point for Bangun
 Includes Sentry monitoring, CORS, rate limiting, error handling, and background jobs
 """
 
+import multiprocessing
 import sentry_sdk
 from concurrent.futures import ProcessPoolExecutor
 from contextlib import asynccontextmanager
@@ -42,8 +43,14 @@ async def lifespan(app: FastAPI):
     global boq_executor
     # Startup
     start_background_jobs()
-    # Initialize executor with 2 workers (BoQ processing is memory-intensive)
-    boq_executor = ProcessPoolExecutor(max_workers=2)
+    # Initialize executor with 2 workers (BoQ processing is memory-intensive).
+    # spawn (not fork): forked workers inherit the parent's open TLS connections,
+    # which corrupts them mid-handshake (observed in production on Linux as
+    # "SSLV3_ALERT_BAD_RECORD_MAC" from the OpenAI client). macOS already
+    # defaults to spawn, which is why local runs never reproduced it.
+    boq_executor = ProcessPoolExecutor(
+        max_workers=2, mp_context=multiprocessing.get_context("spawn")
+    )
     yield
     # Shutdown
     stop_background_jobs()
