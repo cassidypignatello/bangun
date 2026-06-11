@@ -123,13 +123,16 @@ async def find_exact_match(material_name: str) -> dict | None:
         similarity = max(similarity_id, similarity_en)
 
         if similarity > 0.95:
+            # Same freshness gate as Strategy 1: stale/seeded rows must not
+            # be reported as high-confidence historical prices.
+            fresh = _is_price_fresh(entry)
             return {
                 "material_name": get_material_display_name(entry),
                 "unit_price_idr": int(
                     entry.get("price_avg", 0) or 0
                 ),  # Convert to int for Pydantic
-                "source": "historical",
-                "confidence": similarity,
+                "source": "historical" if fresh else _STALE_SOURCE,
+                "confidence": similarity if fresh else _STALE_CONFIDENCE,
                 # Use actual product URL if available, not just search term
                 "marketplace_url": entry.get("tokopedia_affiliate_url"),
             }
@@ -170,13 +173,17 @@ async def find_fuzzy_match(material_name: str, threshold: float = 0.90) -> dict 
 
         if similarity > best_score:
             best_score = similarity
+            # Same freshness gate as the exact/historical paths: stale or
+            # seeded rows (NULL/expired price_updated_at) are flagged as
+            # stale_cache with reduced confidence.
+            fresh = _is_price_fresh(entry)
             best_match = {
                 "material_name": get_material_display_name(entry),
                 "unit_price_idr": int(
                     entry.get("price_avg", 0) or 0
                 ),  # Convert to int for Pydantic
-                "source": "historical_fuzzy",
-                "confidence": similarity,
+                "source": "historical_fuzzy" if fresh else _STALE_SOURCE,
+                "confidence": similarity if fresh else _STALE_CONFIDENCE,
                 # Use actual product URL if available, not just search term
                 "marketplace_url": entry.get("tokopedia_affiliate_url"),
             }

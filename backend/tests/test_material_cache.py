@@ -1128,3 +1128,138 @@ class TestStaleCacheFreshnessGate:
         assert result is not None
         assert result["source"] == "stale_cache"
         assert result["confidence"] == 0.5
+
+    # -------------------------------------------------------------------------
+    # Historical path (find_exact_match Strategy 2 — ilike + similarity)
+    # -------------------------------------------------------------------------
+
+    def _patch_strategy1_miss(self):
+        """Patch get_supabase_client so the normalized_name lookup returns no rows."""
+        from unittest.mock import MagicMock, patch
+
+        empty = MagicMock()
+        empty.data = []
+        p = patch("app.services.semantic_matcher.get_supabase_client")
+        mock_client = p.start()
+        mock_client.return_value.table.return_value.select.return_value.eq.return_value.limit.return_value.execute.return_value = empty
+        return p
+
+    @pytest.mark.asyncio
+    async def test_stale_historical_match_gated(self):
+        """Strategy-2 'historical' hits on stale/NULL rows get stale_cache / 0.5."""
+        from unittest.mock import AsyncMock, patch
+
+        stale_entry = {
+            "id": "mat-hist-stale",
+            "name_id": "Semen Tiga Roda 40kg",
+            "price_avg": 85000,
+            "price_updated_at": None,  # Seeded — never scraped
+            "tokopedia_affiliate_url": None,
+        }
+
+        p1 = self._patch_strategy1_miss()
+        try:
+            with patch(
+                "app.services.semantic_matcher.search_materials",
+                new=AsyncMock(return_value=[stale_entry]),
+            ):
+                from app.services.semantic_matcher import find_exact_match
+
+                # Identical name → similarity 1.0 → takes the historical branch
+                result = await find_exact_match("Semen Tiga Roda 40kg")
+        finally:
+            p1.stop()
+
+        assert result is not None
+        assert result["source"] == "stale_cache"
+        assert result["confidence"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_fresh_historical_match_keeps_source_and_similarity(self):
+        """Strategy-2 hits on fresh rows keep source='historical' and similarity confidence."""
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import AsyncMock, patch
+
+        fresh_entry = {
+            "id": "mat-hist-fresh",
+            "name_id": "Semen Tiga Roda 40kg",
+            "price_avg": 85000,
+            "price_updated_at": (
+                datetime.now(timezone.utc) - timedelta(days=1)
+            ).isoformat(),
+            "tokopedia_affiliate_url": None,
+        }
+
+        p1 = self._patch_strategy1_miss()
+        try:
+            with patch(
+                "app.services.semantic_matcher.search_materials",
+                new=AsyncMock(return_value=[fresh_entry]),
+            ):
+                from app.services.semantic_matcher import find_exact_match
+
+                result = await find_exact_match("Semen Tiga Roda 40kg")
+        finally:
+            p1.stop()
+
+        assert result is not None
+        assert result["source"] == "historical"
+        assert result["confidence"] == 1.0  # identical name
+
+    # -------------------------------------------------------------------------
+    # Fuzzy path (find_fuzzy_match — 'historical_fuzzy')
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_stale_fuzzy_match_gated(self):
+        """Fuzzy hits on stale/NULL rows get stale_cache / 0.5."""
+        from unittest.mock import AsyncMock, patch
+
+        stale_entry = {
+            "id": "mat-fuzzy-stale",
+            "name_id": "Granit Lantai 60x60 cm",
+            "price_avg": 75000,
+            "price_updated_at": None,
+            "tokopedia_affiliate_url": None,
+        }
+
+        with patch(
+            "app.services.semantic_matcher.search_materials",
+            new=AsyncMock(return_value=[stale_entry]),
+        ):
+            from app.services.semantic_matcher import find_fuzzy_match
+
+            # Similar but not identical (>0.90 similarity)
+            result = await find_fuzzy_match("Granit Lantai 60x60")
+
+        assert result is not None
+        assert result["source"] == "stale_cache"
+        assert result["confidence"] == 0.5
+
+    @pytest.mark.asyncio
+    async def test_fresh_fuzzy_match_keeps_source(self):
+        """Fuzzy hits on fresh rows keep source='historical_fuzzy'."""
+        from datetime import datetime, timedelta, timezone
+        from unittest.mock import AsyncMock, patch
+
+        fresh_entry = {
+            "id": "mat-fuzzy-fresh",
+            "name_id": "Granit Lantai 60x60 cm",
+            "price_avg": 75000,
+            "price_updated_at": (
+                datetime.now(timezone.utc) - timedelta(days=1)
+            ).isoformat(),
+            "tokopedia_affiliate_url": None,
+        }
+
+        with patch(
+            "app.services.semantic_matcher.search_materials",
+            new=AsyncMock(return_value=[fresh_entry]),
+        ):
+            from app.services.semantic_matcher import find_fuzzy_match
+
+            result = await find_fuzzy_match("Granit Lantai 60x60")
+
+        assert result is not None
+        assert result["source"] == "historical_fuzzy"
+        assert 0.90 < result["confidence"] <= 1.0

@@ -44,10 +44,20 @@ class TestSemanticMatcher:
     @pytest.mark.asyncio
     async def test_find_exact_match_found(self):
         """Should return match when similarity > 0.95"""
+        from datetime import datetime, timedelta, timezone
+
+        fresh_ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         with patch("app.services.semantic_matcher.search_materials") as mock_history:
-            # Use actual database schema fields: name_id, name_en, price_avg
+            # Use actual database schema fields: name_id, name_en, price_avg.
+            # price_updated_at must be fresh — stale/NULL rows are now gated
+            # to source='stale_cache' (see TestStaleCacheFreshnessGate).
             mock_history.return_value = [
-                {"name_id": "Semen Portland 50kg", "name_en": "Portland Cement 50kg", "price_avg": 65000}
+                {
+                    "name_id": "Semen Portland 50kg",
+                    "name_en": "Portland Cement 50kg",
+                    "price_avg": 65000,
+                    "price_updated_at": fresh_ts,
+                }
             ]
 
             from app.services.semantic_matcher import find_exact_match
@@ -73,11 +83,26 @@ class TestSemanticMatcher:
     @pytest.mark.asyncio
     async def test_find_fuzzy_match_found(self):
         """Should return best fuzzy match above threshold"""
+        from datetime import datetime, timedelta, timezone
+
+        fresh_ts = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
         with patch("app.services.semantic_matcher.search_materials") as mock_history:
-            # Use actual database schema fields: name_id, name_en, price_avg
+            # Use actual database schema fields: name_id, name_en, price_avg.
+            # price_updated_at must be fresh — stale/NULL rows are now gated
+            # to source='stale_cache' (see TestStaleCacheFreshnessGate).
             mock_history.return_value = [
-                {"name_id": "Semen Portland Tiga Roda", "name_en": "Portland Cement Tiga Roda", "price_avg": 65000},
-                {"name_id": "Semen Holcim", "name_en": "Holcim Cement", "price_avg": 60000},
+                {
+                    "name_id": "Semen Portland Tiga Roda",
+                    "name_en": "Portland Cement Tiga Roda",
+                    "price_avg": 65000,
+                    "price_updated_at": fresh_ts,
+                },
+                {
+                    "name_id": "Semen Holcim",
+                    "name_en": "Holcim Cement",
+                    "price_avg": 60000,
+                    "price_updated_at": fresh_ts,
+                },
             ]
 
             from app.services.semantic_matcher import find_fuzzy_match
