@@ -512,7 +512,21 @@ def batch_price_materials(
     # --- Scrape marketplace for cache misses (55% → 85%) ---
     if uncached_items:
         uncached_queries = [item["_search_query"] for _, item in uncached_items]
-        raw_results = provider.batch_search_sync(uncached_queries, limit_per_query=10)
+
+        # batch_progress maps actor-chunk completion onto the 55-80 window.
+        # After all chunks complete, per-item processing covers 80-85.
+        n_uncached = max(len(uncached_items), 1)
+
+        def _on_batch_progress(done: int, total_chunks: int) -> None:
+            if progress_callback and total > 0:
+                pct = 55 + int(25 * done / max(total_chunks, 1))
+                progress_callback(min(pct, 80))
+
+        raw_results = provider.batch_search_sync(
+            uncached_queries,
+            limit_per_query=10,
+            batch_progress=_on_batch_progress,
+        )
 
         # First pass: build matches, track which items got zero candidates
         fallback_needed: list[tuple[int, dict, str]] = []  # (matches-index, item, simplified_query)
@@ -547,9 +561,9 @@ def batch_price_materials(
                     fallback_needed.append((i, item, simplified))
 
             if progress_callback and total > 0:
-                # Scrapes use the 55-85% range
-                pct = 55 + int(30 * (idx + 1) / max(len(uncached_items), 1))
-                progress_callback(pct)
+                # Per-item post-processing uses the 80-85% range
+                pct = 80 + int(5 * (idx + 1) / n_uncached)
+                progress_callback(min(pct, 85))
 
         # One-round query-simplification fallback for zero-candidate items
         if fallback_needed:

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from enum import Enum
 from itertools import islice
-from typing import Iterator
+from typing import Callable, Iterator, Optional
 
 import structlog
 from apify_client import ApifyClient
@@ -154,7 +154,11 @@ class MarketplaceProvider(ABC):
         ...
 
     def batch_search_sync(
-        self, queries: list[str], limit_per_query: int = 10
+        self,
+        queries: list[str],
+        limit_per_query: int = 10,
+        *,
+        batch_progress: Optional[Callable[[int, int], None]] = None,
     ) -> dict[str, list[dict]]:
         """
         Search for multiple queries. Default: sequential single searches.
@@ -165,13 +169,19 @@ class MarketplaceProvider(ABC):
         Args:
             queries: List of search terms.
             limit_per_query: Max results per query.
+            batch_progress: Optional callable(done_batches, total_batches).
+                The default implementation treats each query as one "batch"
+                and emits (i+1, len(queries)) after each search_sync call.
 
         Returns:
             Dict mapping each query to its raw product list.
         """
         output: dict[str, list[dict]] = {}
-        for query in queries:
+        total = len(queries)
+        for i, query in enumerate(queries):
             output[query] = self.search_sync(query, limit=limit_per_query)
+            if batch_progress is not None:
+                batch_progress(i + 1, total)
         return output
 
 
@@ -241,7 +251,11 @@ class TokopediaProvider(MarketplaceProvider):
         return rank_best_sellers(results)
 
     def batch_search_sync(
-        self, queries: list[str], limit_per_query: int = 10
+        self,
+        queries: list[str],
+        limit_per_query: int = 10,
+        *,
+        batch_progress: Optional[Callable[[int, int], None]] = None,
     ) -> dict[str, list[dict]]:
         """
         Batch multiple queries into groups of 5, one actor run per group.
@@ -252,6 +266,8 @@ class TokopediaProvider(MarketplaceProvider):
         Args:
             queries: Search terms.
             limit_per_query: Max results per individual query.
+            batch_progress: Optional callable(done_batches, total_batches).
+                Called after each actor chunk completes.
 
         Returns:
             Dict mapping each query to its matched product list.
@@ -260,6 +276,8 @@ class TokopediaProvider(MarketplaceProvider):
             return {}
 
         output: dict[str, list[dict]] = {q: [] for q in queries}
+        total_batches = max(1, (len(queries) + self.BATCH_SIZE - 1) // self.BATCH_SIZE)
+        done_batches = 0
 
         for batch in _batched(queries, self.BATCH_SIZE):
             batch_list = list(batch)
@@ -275,6 +293,9 @@ class TokopediaProvider(MarketplaceProvider):
             dataset_id = get_run_dataset_id(run)
             if not dataset_id:
                 logger.warning("marketplace_run_no_dataset", queries=batch_list)
+                done_batches += 1
+                if batch_progress is not None:
+                    batch_progress(done_batches, total_batches)
                 continue
             items = [
                 map_actor_item(item)
@@ -282,6 +303,10 @@ class TokopediaProvider(MarketplaceProvider):
             ]
 
             self._assign_results_to_queries(batch_list, items, output)
+
+            done_batches += 1
+            if batch_progress is not None:
+                batch_progress(done_batches, total_batches)
 
         return output
 
@@ -372,7 +397,11 @@ class MockMarketplaceProvider(MarketplaceProvider):
         return rank_best_sellers(results)
 
     def batch_search_sync(
-        self, queries: list[str], limit_per_query: int = 10
+        self,
+        queries: list[str],
+        limit_per_query: int = 10,
+        *,
+        batch_progress: Optional[Callable[[int, int], None]] = None,
     ) -> dict[str, list[dict]]:
         """
         Return one fake product per query without any network calls.
@@ -380,6 +409,7 @@ class MockMarketplaceProvider(MarketplaceProvider):
         Args:
             queries: Search terms.
             limit_per_query: Ignored.
+            batch_progress: Ignored (no real batching occurs).
 
         Returns:
             Dict mapping each query to its single fake product.

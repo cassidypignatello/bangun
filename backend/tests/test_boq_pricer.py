@@ -1154,3 +1154,176 @@ class TestQuerySimplificationFallback:
         assert provider.batch_search_sync.call_count == 2
         _, match = pairs[0]
         assert match.result is None
+
+
+# =============================================================================
+# Scrape-Batch Progress Tests
+# =============================================================================
+
+
+class TestScrapeBatchProgress:
+    """
+    Tests that batch_price_materials maps chunk completion (via batch_progress)
+    onto the 55-80 window, and per-item post-processing onto 80-85.
+    """
+
+    def _make_provider_with_batch_progress(self, results_by_query: dict) -> MagicMock:
+        """
+        Build a provider mock whose batch_search_sync invokes batch_progress
+        to simulate real TokopediaProvider chunk behaviour.
+
+        The side_effect intercepts the keyword-only batch_progress kwarg and
+        calls it once with (1, 1) — simulating a single actor chunk completing.
+        """
+        provider = MagicMock()
+
+        def batch_side_effect(queries, limit_per_query=10, *, batch_progress=None):
+            if batch_progress is not None:
+                batch_progress(1, 1)
+            return results_by_query
+
+        provider.batch_search_sync.side_effect = batch_side_effect
+
+        def mock_rank(results):
+            scored = []
+            for r in results:
+                s = MagicMock()
+                s.product = r
+                s.total_score = 0.8
+                scored.append(s)
+            return scored
+
+        provider.rank_results.side_effect = mock_rank
+        return provider
+
+    def test_progress_values_within_40_85(self):
+        """All emitted progress values must lie in the 40-85 range."""
+        items = [
+            {"id": "1", "description": "Granit Lantai 60x60",
+             "contractor_unit_price": 200000, "quantity": 2},
+            {"id": "2", "description": "Pipa PVC 4 Inch",
+             "contractor_unit_price": 50000, "quantity": 5},
+        ]
+        products = {
+            "granit lantai 60x60": [{"name": "Granit Lantai 60x60", "price_idr": 190000}],
+            "pipa pvc 4 inch": [{"name": "Pipa PVC 4 inch", "price_idr": 45000}],
+        }
+        provider = self._make_provider_with_batch_progress(products)
+
+        progress = []
+        batch_price_materials(
+            items=items,
+            provider=provider,
+            supabase_client=MagicMock(),
+            progress_callback=lambda pct: progress.append(pct),
+        )
+
+        assert len(progress) > 0
+        assert all(40 <= v <= 85 for v in progress), f"Out of range: {progress}"
+
+    def test_progress_is_monotonic(self):
+        """Progress values must never decrease."""
+        items = [
+            {"id": "1", "description": "Granit Lantai 60x60",
+             "contractor_unit_price": 200000, "quantity": 2},
+            {"id": "2", "description": "Pipa PVC 4 Inch",
+             "contractor_unit_price": 50000, "quantity": 5},
+        ]
+        products = {
+            "granit lantai 60x60": [{"name": "Granit Lantai 60x60", "price_idr": 190000}],
+            "pipa pvc 4 inch": [{"name": "Pipa PVC 4 inch", "price_idr": 45000}],
+        }
+        provider = self._make_provider_with_batch_progress(products)
+
+        progress = []
+        batch_price_materials(
+            items=items,
+            provider=provider,
+            supabase_client=MagicMock(),
+            progress_callback=lambda pct: progress.append(pct),
+        )
+
+        for i in range(1, len(progress)):
+            assert progress[i] >= progress[i - 1], (
+                f"Progress went backwards: {progress[i-1]} → {progress[i]} at index {i}"
+            )
+
+    def test_scrape_chunk_emits_value_in_55_to_80_window(self):
+        """At least one emitted value must be in [55, 80] (the scrape-chunk window)."""
+        items = [
+            {"id": "1", "description": "Granit Lantai 60x60",
+             "contractor_unit_price": 200000, "quantity": 2},
+        ]
+        products = {
+            "granit lantai 60x60": [{"name": "Granit Lantai 60x60", "price_idr": 190000}],
+        }
+        provider = self._make_provider_with_batch_progress(products)
+
+        progress = []
+        batch_price_materials(
+            items=items,
+            provider=provider,
+            supabase_client=MagicMock(),
+            progress_callback=lambda pct: progress.append(pct),
+        )
+
+        scrape_window = [v for v in progress if 55 <= v <= 80]
+        assert len(scrape_window) > 0, (
+            f"Expected at least one value in 55-80 (scrape window), got {progress}"
+        )
+
+    def test_per_item_values_in_80_to_85_window(self):
+        """Values emitted after the scrape batch completes must be in [80, 85]."""
+        items = [
+            {"id": "1", "description": "Granit Lantai 60x60",
+             "contractor_unit_price": 200000, "quantity": 2},
+        ]
+        products = {
+            "granit lantai 60x60": [{"name": "Granit Lantai 60x60", "price_idr": 190000}],
+        }
+        provider = self._make_provider_with_batch_progress(products)
+
+        progress = []
+        batch_price_materials(
+            items=items,
+            provider=provider,
+            supabase_client=MagicMock(),
+            progress_callback=lambda pct: progress.append(pct),
+        )
+
+        # The last value(s) should be in 80-85 (per-item post-scrape range)
+        assert progress[-1] >= 80, f"Final progress {progress[-1]} not in 80-85 range"
+        assert progress[-1] <= 85, f"Final progress {progress[-1]} exceeds 85"
+
+    def test_cache_hits_only_jumps_to_85(self):
+        """When all items are cache hits, progress should jump directly to 85."""
+        from datetime import datetime, timezone, timedelta
+
+        items = [
+            {"id": "1", "description": "Granit Lantai 60x60",
+             "contractor_unit_price": 200000, "quantity": 2},
+        ]
+
+        fresh_time = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        mock_sb = MagicMock()
+        cache_result = MagicMock()
+        cache_result.data = [{
+            "normalized_name": "60x60 granit lantai",
+            "price_median": 190000,
+            "price_updated_at": fresh_time,
+            "name_id": "Granit Lantai 60x60",
+        }]
+        mock_sb.table.return_value.select.return_value.in_.return_value.execute.return_value = cache_result
+
+        provider = MagicMock()
+        progress = []
+        batch_price_materials(
+            items=items,
+            provider=provider,
+            supabase_client=mock_sb,
+            progress_callback=lambda pct: progress.append(pct),
+        )
+
+        # Cache hit path: emits 40+int(15*1/1)=55 for the cache item, then 85 at end
+        assert 85 in progress
+        provider.batch_search_sync.assert_not_called()

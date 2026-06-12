@@ -148,6 +148,24 @@ def _is_truncated(choice) -> bool:
     return getattr(choice, "finish_reason", None) == "length"
 
 
+def _emit_batch_progress(callback, batch_num: int, total_batches: int) -> None:
+    """
+    Emit extraction progress after each PDF batch completes.
+
+    Emits 10 + int(20 * batch_num / total_batches), capped at 30.
+    Silently ignored when callback is None.
+
+    Args:
+        callback: Optional callable(int) progress reporter.
+        batch_num: 1-based index of the batch just completed.
+        total_batches: Total number of batches for this document.
+    """
+    if callback is None:
+        return
+    pct = 10 + int(20 * batch_num / total_batches)
+    callback(min(pct, 30))
+
+
 def _log_openai_usage(response, stage: str, **context) -> Optional[dict]:
     """
     Extract token usage from an OpenAI response and emit a structured log line.
@@ -211,7 +229,12 @@ def process_boq_job_sync(
         logger.info("boq_extraction_start", job_id=job_id, format=file_format.value)
 
         if file_format == BoQFileFormat.PDF:
-            extracted = _extract_from_pdf_sync(file_content, filename)
+            def on_extraction_progress(pct):
+                _update_job_status_sync(supabase, job_id, progress=pct)
+
+            extracted = _extract_from_pdf_sync(
+                file_content, filename, progress_callback=on_extraction_progress
+            )
         else:
             # Excel extraction is already synchronous-compatible
             extracted = _extract_from_excel_sync(file_content, filename)
@@ -291,8 +314,20 @@ def process_boq_job_sync(
         )
 
 
-def _extract_from_pdf_sync(file_content: bytes, filename: str) -> ExtractedBoQData:
-    """Synchronous PDF extraction using GPT-4o Vision."""
+def _extract_from_pdf_sync(
+    file_content: bytes,
+    filename: str,
+    progress_callback=None,
+) -> ExtractedBoQData:
+    """Synchronous PDF extraction using GPT-4o Vision.
+
+    Args:
+        file_content: Raw PDF bytes.
+        filename: Original filename for logging.
+        progress_callback: Optional callable(int) receiving progress percent.
+            Emits 8 after page conversion, then 10+(20*batch/total) after each
+            batch (landing at 30 when all batches complete). Ignored when None.
+    """
     import fitz
     import json
     from app.config import get_settings
@@ -352,6 +387,9 @@ def _extract_from_pdf_sync(file_content: bytes, filename: str) -> ExtractedBoQDa
         pdf_document.close()
         logger.info("pdf_to_images_complete", image_count=len(image_contents))
 
+        if progress_callback is not None:
+            progress_callback(8)
+
     except Exception as e:
         logger.error("pdf_to_images_failed", error=str(e))
         return ExtractedBoQData(extraction_warnings=[f"PDF conversion failed: {str(e)}"])
@@ -389,6 +427,7 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
     logger.info("gpt4o_extraction_start", total_pages=len(pages_to_process))
 
     extraction_model = settings.boq_extraction_model
+    total_batches = max(1, (len(pages_to_process) + BATCH_SIZE - 1) // BATCH_SIZE)
 
     for batch_start in range(0, len(pages_to_process), BATCH_SIZE):
         batch_end = min(batch_start + BATCH_SIZE, len(pages_to_process))
@@ -417,9 +456,11 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
             if getattr(choice.message, 'refusal', None):
                 logger.warning("gpt4o_batch_refused", batch=batch_num)
                 extraction_warnings.append(f"Batch {batch_num} refused")
+                _emit_batch_progress(progress_callback, batch_num, total_batches)
                 continue
 
             if not choice.message.content:
+                _emit_batch_progress(progress_callback, batch_num, total_batches)
                 continue
 
             if _is_truncated(choice):
@@ -436,6 +477,7 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
                 )
                 all_items.extend(fb_items)
                 extraction_warnings.extend(fb_warnings)
+                _emit_batch_progress(progress_callback, batch_num, total_batches)
                 continue
 
             data = json.loads(choice.message.content)
@@ -464,6 +506,8 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
                     extraction_confidence=item_data.get("extraction_confidence", 0.8),
                 ))
 
+            _emit_batch_progress(progress_callback, batch_num, total_batches)
+
         except json.JSONDecodeError as e:
             logger.error("gpt4o_batch_failed", batch=batch_num, error=str(e), error_type="JSONDecodeError")
             extraction_warnings.append(
@@ -475,6 +519,7 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
             )
             all_items.extend(fb_items)
             extraction_warnings.extend(fb_warnings)
+            _emit_batch_progress(progress_callback, batch_num, total_batches)
             continue
 
         except Exception as e:
@@ -490,6 +535,7 @@ Indonesian terms: SAT=Satuan(Unit), VOL=Volume(Quantity), HARGA SATUAN=Unit Pric
                 break
 
             extraction_warnings.append(f"Batch {batch_num} failed: {error_msg}")
+            _emit_batch_progress(progress_callback, batch_num, total_batches)
             continue
 
     logger.info("gpt4o_extraction_complete", total_items=len(all_items))

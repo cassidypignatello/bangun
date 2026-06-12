@@ -466,6 +466,111 @@ class TestTokopediaProviderBatchSearchSync:
         assert results == {}
 
 
+class TestTokopediaProviderBatchProgress:
+    """Tests for batch_progress callback in TokopediaProvider.batch_search_sync."""
+
+    def _make_mock_client(self, dataset_items=None):
+        """Build a mock ApifyClient that returns the given items from the dataset."""
+        mock_dataset = MagicMock()
+        mock_dataset.iterate_items.return_value = iter(dataset_items or [])
+        mock_actor = MagicMock()
+        mock_actor.call.return_value = {"defaultDatasetId": "ds-123"}
+        mock_client = MagicMock()
+        mock_client.actor.return_value = mock_actor
+        mock_client.dataset.return_value = mock_dataset
+        return mock_client
+
+    def test_batch_progress_called_after_each_chunk(self):
+        """7 queries (2 chunks of 5+2) → batch_progress called with (1,2) then (2,2)."""
+        from app.integrations.marketplace import TokopediaProvider
+
+        queries = [f"query {i}" for i in range(7)]  # 2 chunks: 5 + 2
+
+        mock_client = self._make_mock_client(dataset_items=[])
+        progress_calls = []
+
+        with patch("app.integrations.marketplace.ApifyClient", return_value=mock_client):
+            provider = TokopediaProvider(apify_token="test_token")
+            # Each call to iterate_items must return a fresh iterator
+            mock_client.dataset.return_value.iterate_items.side_effect = [iter([]), iter([])]
+            provider.batch_search_sync(
+                queries,
+                limit_per_query=10,
+                batch_progress=lambda done, total: progress_calls.append((done, total)),
+            )
+
+        assert progress_calls == [(1, 2), (2, 2)]
+
+    def test_batch_progress_single_chunk(self):
+        """3 queries (fits in one chunk) → batch_progress called with (1,1)."""
+        from app.integrations.marketplace import TokopediaProvider
+
+        queries = ["query a", "query b", "query c"]
+
+        mock_client = MagicMock()
+        mock_client.actor.return_value.call.return_value = {"defaultDatasetId": "ds-1"}
+        mock_client.dataset.return_value.iterate_items.return_value = iter([])
+
+        progress_calls = []
+
+        with patch("app.integrations.marketplace.ApifyClient", return_value=mock_client):
+            provider = TokopediaProvider(apify_token="test_token")
+            provider.batch_search_sync(
+                queries,
+                batch_progress=lambda done, total: progress_calls.append((done, total)),
+            )
+
+        assert progress_calls == [(1, 1)]
+
+    def test_no_batch_progress_does_not_crash(self):
+        """Passing no batch_progress (default None) must not raise."""
+        from app.integrations.marketplace import TokopediaProvider
+
+        mock_client = MagicMock()
+        mock_client.actor.return_value.call.return_value = {"defaultDatasetId": "ds-1"}
+        mock_client.dataset.return_value.iterate_items.return_value = iter([])
+
+        with patch("app.integrations.marketplace.ApifyClient", return_value=mock_client):
+            provider = TokopediaProvider(apify_token="test_token")
+            result = provider.batch_search_sync(["test query"])
+
+        assert "test query" in result
+
+    def test_batch_progress_called_even_when_run_fails(self):
+        """batch_progress still fires when a batch's actor run returns no dataset."""
+        from app.integrations.marketplace import TokopediaProvider
+
+        queries = [f"q{i}" for i in range(6)]  # 2 chunks of 5+1
+
+        mock_client = MagicMock()
+        mock_client.actor.return_value.call.return_value = None  # all runs fail
+
+        progress_calls = []
+
+        with patch("app.integrations.marketplace.ApifyClient", return_value=mock_client):
+            provider = TokopediaProvider(apify_token="test_token")
+            provider.batch_search_sync(
+                queries,
+                batch_progress=lambda done, total: progress_calls.append((done, total)),
+            )
+
+        assert progress_calls == [(1, 2), (2, 2)]
+
+    def test_mock_provider_accepts_batch_progress_kwarg(self):
+        """MockMarketplaceProvider.batch_search_sync must accept batch_progress without error."""
+        from app.integrations.marketplace import MockMarketplaceProvider
+
+        provider = MockMarketplaceProvider()
+        calls = []
+        result = provider.batch_search_sync(
+            ["granit 60x60"],
+            batch_progress=lambda done, total: calls.append((done, total)),
+        )
+        # batch_progress is ignored — no calls, but no error either
+        assert "granit 60x60" in result
+        assert calls == []
+
+
 class TestTokopediaProviderRankResults:
     """Tests for TokopediaProvider.rank_results"""
 

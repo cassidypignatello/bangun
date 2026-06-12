@@ -163,6 +163,134 @@ class TestExtractPagesIndividuallySync:
         assert "page 6" in warnings[0]
 
 
+class TestExtractFromPdfSyncProgressCallback:
+    """Tests for the progress_callback parameter of _extract_from_pdf_sync."""
+
+    def _run_extraction(self, monkeypatch, pdf_bytes, openai_responses, *, callback=None):
+        """Helper: run _extract_from_pdf_sync with mocked settings and OpenAI."""
+        import fitz  # noqa: F401  (already imported via pdf_bytes creation)
+        from unittest.mock import MagicMock
+        import app.config
+        from app.services import boq_processor
+
+        settings = SimpleNamespace(
+            boq_dry_run=False,
+            openai_api_key="sk-test",
+            boq_max_pages=10,
+            boq_extraction_model="gpt-4o",
+        )
+        monkeypatch.setattr(app.config, "get_settings", lambda: settings)
+
+        client = MagicMock()
+        client.chat.completions.create.side_effect = openai_responses
+        import openai
+        monkeypatch.setattr(openai, "OpenAI", lambda **kwargs: client)
+
+        return boq_processor._extract_from_pdf_sync(
+            pdf_bytes, "test.pdf", progress_callback=callback
+        )
+
+    def _make_pdf(self, n_pages: int = 3) -> bytes:
+        """Create an n-page blank PDF."""
+        import fitz
+
+        doc = fitz.open()
+        for _ in range(n_pages):
+            doc.new_page()
+        data = doc.tobytes()
+        doc.close()
+        return data
+
+    def test_emits_8_after_conversion(self, monkeypatch):
+        """progress_callback(8) is the first emission (after PDF→images step)."""
+        pdf_bytes = self._make_pdf(2)  # 1 cover + 1 real page → 1 batch
+
+        calls = []
+        result = self._run_extraction(
+            monkeypatch,
+            pdf_bytes,
+            [_page_response([{"description": "Item A"}])],
+            callback=lambda pct: calls.append(pct),
+        )
+        assert calls[0] == 8
+
+    def test_emits_increasing_batch_values_ending_at_30(self, monkeypatch):
+        """Each batch emits 10+(20*batch/total); final value is 30."""
+        # 3 pages after cover skip = 1 batch of 3 → 1 batch total
+        # With 4 pages (1 cover + 3 real), we get exactly 1 batch → final = 30
+        pdf_bytes = self._make_pdf(4)
+
+        calls = []
+        self._run_extraction(
+            monkeypatch,
+            pdf_bytes,
+            [_page_response([{"description": "X"}])],
+            callback=lambda pct: calls.append(pct),
+        )
+        # 8, then batch 1/1 = 10 + int(20*1/1) = 30
+        assert calls == [8, 30]
+
+    def test_emits_intermediate_values_for_multiple_batches(self, monkeypatch):
+        """With 7 pages (6 after cover skip) → 2 batches: 8, 20, 30."""
+        # 1 cover + 6 real pages → 2 batches of 3
+        pdf_bytes = self._make_pdf(7)
+
+        calls = []
+        self._run_extraction(
+            monkeypatch,
+            pdf_bytes,
+            [
+                _page_response([{"description": "A"}]),
+                _page_response([{"description": "B"}]),
+            ],
+            callback=lambda pct: calls.append(pct),
+        )
+        # 8, batch 1/2 = 10+int(20*1/2)=20, batch 2/2 = 10+int(20*2/2)=30
+        assert calls == [8, 20, 30]
+
+    def test_callback_values_are_non_decreasing(self, monkeypatch):
+        """Progress must never go backwards."""
+        pdf_bytes = self._make_pdf(4)
+
+        calls = []
+        self._run_extraction(
+            monkeypatch,
+            pdf_bytes,
+            [_page_response([])],
+            callback=lambda pct: calls.append(pct),
+        )
+        assert calls == sorted(calls)
+
+    def test_no_callback_does_not_crash(self, monkeypatch):
+        """Passing no callback (default None) must not raise."""
+        pdf_bytes = self._make_pdf(2)
+
+        # Should not raise even without a callback
+        result = self._run_extraction(
+            monkeypatch,
+            pdf_bytes,
+            [_page_response([{"description": "Item A"}])],
+        )
+        assert result is not None
+
+    def test_truncated_fallback_also_emits_batch_progress(self, monkeypatch):
+        """Batch that falls through page-by-page recovery still emits progress."""
+        pdf_bytes = self._make_pdf(2)  # 1 cover + 1 page → 1 batch
+
+        calls = []
+        self._run_extraction(
+            monkeypatch,
+            pdf_bytes,
+            [
+                _page_response([{"description": "INCOMPLETE"}], finish_reason="length"),
+                _page_response([{"description": "Recovered"}]),
+            ],
+            callback=lambda pct: calls.append(pct),
+        )
+        # 8 (after conversion), then batch 1/1 = 30 (after fallback)
+        assert calls == [8, 30]
+
+
 class TestTruncatedBatchRecovery:
     def test_truncated_batch_with_valid_json_goes_to_fallback(self, monkeypatch):
         """finish_reason=='length' must trigger page-by-page recovery even when
