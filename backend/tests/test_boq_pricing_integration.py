@@ -316,13 +316,39 @@ class TestPersistPriceResultsWiring:
 class TestCalculateSummarySync:
     """Test that _calculate_summary_sync aggregates market pricing correctly."""
 
-    def test_computes_market_estimate_from_priced_items(self):
-        """Should sum market_total from all priced items."""
+    def _make_mock_sb(self, items_data):
+        """Helper: build a minimal Supabase mock returning the given items."""
+        mock_sb = MagicMock()
+        mock_result = MagicMock()
+        mock_result.data = items_data
+        mock_eq = MagicMock()
+        mock_eq.execute.return_value = mock_result
+        mock_select = MagicMock()
+        mock_select.eq.return_value = mock_eq
+        mock_sb.table.return_value.select.return_value = mock_select
+        mock_update_chain = MagicMock()
+        mock_update_eq = MagicMock()
+        mock_sb.table.return_value.update.return_value = mock_update_chain
+        mock_update_chain.eq.return_value = mock_update_eq
+        return mock_sb
+
+    def test_computes_savings_over_priced_subset_only(self):
+        """savings math must use the same item-subset for contractor and market totals.
+
+        Items:
+          - item-1 (material, priced): contractor 2,500,000 / market 1,950,000
+          - item-2 (material, priced): contractor   425,000 / market   360,000
+          - item-3 (labor,   unpriced): contractor  300,000
+
+        Expected:
+          contractor_total        = 3,225,000  (all items — unchanged "Contractor Quote" tile)
+          priced_contractor_total = 2,925,000  (only priced subset)
+          market_estimate         = 2,310,000
+          potential_savings       =   615,000  (2,925,000 − 2,310,000)
+          savings_percent         ≈ 21.03      (615,000 / 2,925,000 × 100)
+        """
         from app.services.boq_processor import _calculate_summary_sync
 
-        mock_sb = MagicMock()
-
-        # Simulate items already in DB with pricing data
         items_data = [
             {
                 "item_type": "material",
@@ -347,49 +373,36 @@ class TestCalculateSummarySync:
             },
         ]
 
-        # Setup mock: select().eq().execute() returns items
-        mock_result = MagicMock()
-        mock_result.data = items_data
-        mock_eq = MagicMock()
-        mock_eq.execute.return_value = mock_result
-        mock_select = MagicMock()
-        mock_select.eq.return_value = mock_eq
-        mock_sb.table.return_value.select.return_value = mock_select
-
-        # Mock update chain
-        mock_update_chain = MagicMock()
-        mock_update_eq = MagicMock()
-        mock_sb.table.return_value.update.return_value = mock_update_chain
-        mock_update_chain.eq.return_value = mock_update_eq
-
+        mock_sb = self._make_mock_sb(items_data)
         _calculate_summary_sync(mock_sb, "job-123")
 
-        # Verify update was called with correct summary
         mock_sb.table.return_value.update.assert_called_once()
         summary = mock_sb.table.return_value.update.call_args[0][0]
 
+        # Counts
         assert summary["materials_count"] == 2
         assert summary["labor_count"] == 1
         assert summary["owner_supply_count"] == 1
         assert summary["priced_count"] == 2
 
-        # Market estimate = 1950000 + 360000 = 2310000
-        assert Decimal(summary["market_estimate"]) == Decimal("2310000")
-
-        # Contractor total = 2500000 + 425000 + 300000 = 3225000
+        # Whole-document contractor total (unchanged)
         assert Decimal(summary["contractor_total"]) == Decimal("3225000")
 
-        # Potential savings = 3225000 - 2310000 = 915000
-        assert Decimal(summary["potential_savings"]) == Decimal("915000")
+        # Priced-subset contractor total (NEW)
+        assert Decimal(summary["priced_contractor_total"]) == Decimal("2925000")
 
-        # Savings percent = 915000 / 3225000 * 100 ≈ 28.37
-        assert summary["savings_percent"] == pytest.approx(28.37, abs=0.01)
+        # Market estimate = 1,950,000 + 360,000
+        assert Decimal(summary["market_estimate"]) == Decimal("2310000")
+
+        # Savings = priced_contractor_total − market_estimate
+        assert Decimal(summary["potential_savings"]) == Decimal("615000")
+
+        # savings_percent = 615,000 / 2,925,000 × 100 ≈ 21.03
+        assert summary["savings_percent"] == pytest.approx(21.03, abs=0.01)
 
     def test_handles_no_priced_items(self):
-        """Should write NULLs for market_estimate/potential_savings/savings_percent when no items are priced."""
+        """Should write NULLs for all pricing fields when no items are priced."""
         from app.services.boq_processor import _calculate_summary_sync
-
-        mock_sb = MagicMock()
 
         items_data = [
             {
@@ -401,25 +414,14 @@ class TestCalculateSummarySync:
             },
         ]
 
-        mock_result = MagicMock()
-        mock_result.data = items_data
-        mock_eq = MagicMock()
-        mock_eq.execute.return_value = mock_result
-        mock_select = MagicMock()
-        mock_select.eq.return_value = mock_eq
-        mock_sb.table.return_value.select.return_value = mock_select
-
-        mock_update_chain = MagicMock()
-        mock_update_eq = MagicMock()
-        mock_sb.table.return_value.update.return_value = mock_update_chain
-        mock_update_chain.eq.return_value = mock_update_eq
-
+        mock_sb = self._make_mock_sb(items_data)
         _calculate_summary_sync(mock_sb, "job-123")
 
         summary = mock_sb.table.return_value.update.call_args[0][0]
         assert summary["market_estimate"] is None
         assert summary["potential_savings"] is None
         assert summary["savings_percent"] is None
+        assert summary["priced_contractor_total"] is None
         assert summary["priced_count"] == 0
 
 

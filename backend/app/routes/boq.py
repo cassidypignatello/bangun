@@ -307,11 +307,14 @@ async def get_boq_results(request: Request, job_id: str):
     # Calculate summary — keep None for unpriced fields so UI can distinguish
     # "zero savings" from "not priced yet"
     contractor_total = job.get("contractor_total") or 0
+    priced_contractor_total = job.get("priced_contractor_total")
     market_estimate = job.get("market_estimate")
     potential_savings = job.get("potential_savings")
-    if market_estimate is not None and potential_savings is not None and contractor_total > 0:
+    # savings_percent is stored by the processor; recompute only if DB value is
+    # absent but the required inputs are present (e.g. pre-migration rows).
+    if market_estimate is not None and potential_savings is not None and priced_contractor_total is not None:
         savings_percent: Optional[float] = round(
-            float(potential_savings) / float(contractor_total) * 100, 1
+            float(potential_savings) / float(priced_contractor_total) * 100, 1
         )
     else:
         savings_percent = None
@@ -331,6 +334,7 @@ async def get_boq_results(request: Request, job_id: str):
         ),
         summary=BoQSummary(
             contractor_total=contractor_total,
+            priced_contractor_total=priced_contractor_total,
             market_estimate=market_estimate,
             potential_savings=potential_savings,
             savings_percent=savings_percent,

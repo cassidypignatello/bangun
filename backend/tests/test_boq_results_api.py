@@ -88,6 +88,41 @@ class TestBoQSummarySchema:
         assert data["potential_savings"] == Decimal("2000000")
         assert data["savings_percent"] == 20.0
 
+    def test_priced_contractor_total_defaults_to_none(self):
+        """priced_contractor_total is Optional; defaults to None when omitted."""
+        summary = BoQSummary(
+            contractor_total=Decimal("5000000"),
+            market_estimate=None,
+            potential_savings=None,
+            savings_percent=None,
+            total_items=10,
+            materials_count=8,
+            labor_count=2,
+            owner_supply_count=0,
+            priced_count=0,
+        )
+
+        data = summary.model_dump()
+        assert data["priced_contractor_total"] is None
+
+    def test_priced_contractor_total_passes_through(self):
+        """priced_contractor_total is returned when provided."""
+        summary = BoQSummary(
+            contractor_total=Decimal("10000000"),
+            priced_contractor_total=Decimal("7000000"),
+            market_estimate=Decimal("6000000"),
+            potential_savings=Decimal("1000000"),
+            savings_percent=14.29,
+            total_items=5,
+            materials_count=5,
+            labor_count=0,
+            owner_supply_count=0,
+            priced_count=5,
+        )
+
+        data = summary.model_dump()
+        assert data["priced_contractor_total"] == Decimal("7000000")
+
 
 # ---------------------------------------------------------------------------
 # Route-level integration tests (mocking Supabase)
@@ -110,6 +145,32 @@ _COMPLETED_JOB_UNPRICED = {
     # These are NULL in the DB — not priced
     "market_estimate": None,
     "potential_savings": None,
+    "priced_contractor_total": None,
+    "project_name": None,
+    "contractor_name": None,
+    "project_location": None,
+    "extraction_warnings": [],
+    "created_at": "2026-06-01T10:00:00",
+    "completed_at": "2026-06-01T10:05:00",
+}
+
+_COMPLETED_JOB_PRICED = {
+    "id": "job-priced-001",
+    "session_id": "sess-001",
+    "filename": "test_boq_priced.pdf",
+    "file_format": "pdf",
+    "status": "completed",
+    "progress_percent": 100,
+    "message": None,
+    "error_message": None,
+    "total_items_extracted": 3,
+    "materials_count": 2,
+    "labor_count": 1,
+    "owner_supply_count": 1,
+    "contractor_total": "3225000",
+    "priced_contractor_total": "2925000",
+    "market_estimate": "2310000",
+    "potential_savings": "615000",
     "project_name": None,
     "contractor_name": None,
     "project_location": None,
@@ -199,3 +260,67 @@ class TestBoQResultsEndpointNullSummary:
         assert summary["market_estimate"] != 0, "market_estimate must not be coalesced to 0"
         assert summary["potential_savings"] != 0, "potential_savings must not be coalesced to 0"
         assert summary["savings_percent"] != 0, "savings_percent must not be coalesced to 0"
+
+    def test_unpriced_job_returns_null_priced_contractor_total(self):
+        """priced_contractor_total must be null for unpriced jobs."""
+        client = TestClient(app)
+        mock_sb = self._make_supabase_mock(_COMPLETED_JOB_UNPRICED)
+
+        with patch("app.routes.boq.get_supabase_client", return_value=mock_sb):
+            response = client.get(f"{API_PREFIX}/boq/job-unpriced-001/results")
+
+        assert response.status_code == 200
+        summary = response.json()["summary"]
+        assert summary["priced_contractor_total"] is None
+
+
+class TestBoQResultsEndpointPricedSummary:
+    """Route returns priced_contractor_total for priced jobs."""
+
+    def _make_supabase_mock(self, job_data, items_data=None):
+        from unittest.mock import MagicMock
+
+        items_data = items_data or []
+        mock_supabase = MagicMock()
+
+        job_exec = MagicMock()
+        job_exec.data = [job_data]
+
+        items_exec = MagicMock()
+        items_exec.data = items_data
+
+        job_chain = MagicMock()
+        job_chain.execute.return_value = job_exec
+        job_chain.select.return_value = job_chain
+        job_chain.eq.return_value = job_chain
+
+        items_chain = MagicMock()
+        items_chain.execute.return_value = items_exec
+        items_chain.select.return_value = items_chain
+        items_chain.eq.return_value = items_chain
+
+        def table_side_effect(name):
+            if name == "boq_jobs":
+                return job_chain
+            return items_chain
+
+        mock_supabase.table.side_effect = table_side_effect
+        return mock_supabase
+
+    def test_priced_job_returns_priced_contractor_total(self):
+        """priced_contractor_total is passed through from DB to API response."""
+        client = TestClient(app)
+        mock_sb = self._make_supabase_mock(_COMPLETED_JOB_PRICED)
+
+        with patch("app.routes.boq.get_supabase_client", return_value=mock_sb):
+            response = client.get(f"{API_PREFIX}/boq/job-priced-001/results")
+
+        assert response.status_code == 200
+        summary = response.json()["summary"]
+
+        assert summary["priced_contractor_total"] is not None
+        # Stored as "2925000" string in DB, returned as numeric
+        from decimal import Decimal
+        assert Decimal(str(summary["priced_contractor_total"])) == Decimal("2925000")
+        # Whole-document total must still be present and different
+        assert Decimal(str(summary["contractor_total"])) == Decimal("3225000")
