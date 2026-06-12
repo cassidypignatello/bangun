@@ -35,6 +35,20 @@ logger = structlog.get_logger()
 CACHE_TTL_DAYS = 7
 CACHE_STATS_PRICE_BAND = 4.0  # Intra-scrape outlier filter (candidate vs best price). Distinct from boq_match_max_price_ratio, which compares market vs contractor price.
 
+# Products that IMITATE construction materials (stickers, wallpaper, vinyl
+# decals) match material queries by word overlap but are the wrong category.
+# A match whose product name contains one of these tokens is rejected unless
+# the query itself asked for it.
+IMITATION_TOKENS = [
+    "stiker",
+    "sticker",
+    "wallpaper",
+    "wallpeper",   # common misspelling in listings
+    "decal",
+    "tempel dinding",
+    "imitasi",
+]
+
 
 # =============================================================================
 # Material Name Normalization
@@ -101,6 +115,21 @@ def canonicalize_for_cache(normalized_name: str) -> str:
     """
     words = normalized_name.lower().split()
     return " ".join(sorted(words))
+
+
+def simplify_query(query: str) -> str:
+    """
+    Broaden a search query that returned nothing.
+
+    Keeps the first three tokens (Indonesian material queries lead with the
+    material noun: 'keramik dinding kolam renang ex romance' → 'keramik
+    dinding kolam'). Returns '' when simplification wouldn't change anything,
+    signalling the caller to skip the retry.
+    """
+    words = query.split()
+    if len(words) <= 3:
+        return ""
+    return " ".join(words[:3])
 
 
 # =============================================================================
@@ -485,6 +514,9 @@ def batch_price_materials(
         uncached_queries = [item["_search_query"] for _, item in uncached_items]
         raw_results = provider.batch_search_sync(uncached_queries, limit_per_query=10)
 
+        # First pass: build matches, track which items got zero candidates
+        fallback_needed: list[tuple[int, dict, str]] = []  # (matches-index, item, simplified_query)
+
         for idx, (i, item) in enumerate(uncached_items):
             query = item["_search_query"]
             candidates = raw_results.get(query, [])
@@ -508,10 +540,55 @@ def batch_price_materials(
                     unit=item.get("unit"),
                 )
 
+            # Track items that got no candidates for fallback retry
+            if not candidates:
+                simplified = simplify_query(query)
+                if simplified:
+                    fallback_needed.append((i, item, simplified))
+
             if progress_callback and total > 0:
                 # Scrapes use the 55-85% range
                 pct = 55 + int(30 * (idx + 1) / max(len(uncached_items), 1))
                 progress_callback(pct)
+
+        # One-round query-simplification fallback for zero-candidate items
+        if fallback_needed:
+            logger.info(
+                "boq_query_fallback",
+                count=len(fallback_needed),
+            )
+            simplified_queries = [sq for _, _, sq in fallback_needed]
+            fallback_results = provider.batch_search_sync(simplified_queries, limit_per_query=10)
+
+            for i, item, simplified in fallback_needed:
+                candidates = fallback_results.get(simplified, [])
+
+                if candidates:
+                    ranked = provider.rank_results(candidates)
+                    best = ranked[0] if ranked else None
+                else:
+                    best = None
+
+                # Build match against the simplified query so confidence
+                # is computed against the words we actually searched.
+                match = _build_match_from_scrape(
+                    item, simplified, best,
+                    min_confidence=min_confidence,
+                    max_price_ratio=max_price_ratio,
+                )
+                matches[i] = match
+
+                # Write fallback results to cache using simplified key
+                if best is not None:
+                    simplified_cache_key = canonicalize_for_cache(simplified)
+                    _write_cache(
+                        supabase_client,
+                        simplified,
+                        simplified_cache_key,
+                        best.product,
+                        candidates,
+                        unit=item.get("unit"),
+                    )
     else:
         # All from cache — jump to 85%
         if progress_callback:
@@ -590,22 +667,38 @@ def _build_match_from_scrape(
 
     # Quality gate
     rejection = None
+    rejection_token = None
+
+    product_name_lower = product_name.lower()
+    query_lower = query.lower()
+
     if confidence < min_confidence:
         rejection = "low_confidence"
-    elif contractor_price > 0 and market_price > 0:
+    else:
+        # Imitation-product filter: reject sticker/wallpaper/decal products
+        # matching real construction-material queries.
+        for token in IMITATION_TOKENS:
+            if token in product_name_lower and token not in query_lower:
+                rejection = "imitation_product"
+                rejection_token = token
+                break
+
+    if rejection is None and contractor_price > 0 and market_price > 0:
         ratio = float(market_price / contractor_price)
         if ratio > max_price_ratio or ratio < 1.0 / max_price_ratio:
             rejection = "price_out_of_band"
 
     if rejection is not None:
-        logger.info(
-            "boq_match_rejected",
+        log_kwargs: dict = dict(
             query=query,
             reason=rejection,
             confidence=round(confidence, 2),
             market_price=int(market_price),
             contractor_price=int(contractor_price),
         )
+        if rejection_token is not None:
+            log_kwargs["imitation_token"] = rejection_token
+        logger.info("boq_match_rejected", **log_kwargs)
         return _no_result_match(query, from_cache=False)
 
     market_total = market_price * quantity

@@ -23,6 +23,8 @@ from app.services.boq_pricer import (
     batch_price_materials,
     persist_price_results,
     _build_match_from_scrape,
+    simplify_query,
+    IMITATION_TOKENS,
 )
 
 
@@ -552,13 +554,14 @@ class TestBatchPriceMaterialsPrioritizesOwnerSupply:
             max_lookups=2,
         )
 
-        # With max_lookups=2, only the 2 owner_supply items should be processed
-        call_args = mock_provider.batch_search_sync.call_args
-        queries = call_args[0][0]
-        assert len(queries) == 2
+        # With max_lookups=2, only the 2 owner_supply items should be processed.
+        # Inspect the FIRST call (original queries); a fallback second call may
+        # also have fired for zero-candidate items.
+        first_call_queries = mock_provider.batch_search_sync.call_args_list[0][0][0]
+        assert len(first_call_queries) == 2
         # Both queries should be from owner_supply items
-        assert "owner supply material def" in queries
-        assert "another owner supply jkl" in queries
+        assert "owner supply material def" in first_call_queries
+        assert "another owner supply jkl" in first_call_queries
 
     def test_non_owner_supply_after_owner_supply(self):
         """When max_lookups allows, non-owner_supply items come after owner_supply."""
@@ -578,12 +581,13 @@ class TestBatchPriceMaterialsPrioritizesOwnerSupply:
             max_lookups=10,
         )
 
-        call_args = mock_provider.batch_search_sync.call_args
-        queries = call_args[0][0]
-        assert len(queries) == 2
+        # Inspect the FIRST call (original queries); a fallback second call may
+        # also have fired for zero-candidate items.
+        first_call_queries = mock_provider.batch_search_sync.call_args_list[0][0][0]
+        assert len(first_call_queries) == 2
         # Owner supply should be first
-        assert queries[0] == "owner supply material def"
-        assert queries[1] == "regular material abc"
+        assert first_call_queries[0] == "owner supply material def"
+        assert first_call_queries[1] == "regular material abc"
 
 
 # =============================================================================
@@ -877,3 +881,276 @@ class TestMatchQualityGate:
         assert match.market_unit_price is None
         # cache hit means no scrape should have happened
         provider.batch_search_sync.assert_not_called()
+
+
+# =============================================================================
+# F22: Imitation-Product Filter Tests
+# =============================================================================
+
+
+class TestImitationProductFilter:
+    """
+    Imitation/decor products (stickers, wallpaper, vinyl) must not match
+    queries for real construction materials (F22 fix).
+    """
+
+    def _run(self, items, products_by_query, **kwargs):
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = products_by_query
+
+        def mock_rank(results):
+            scored = []
+            for r in results:
+                s = MagicMock()
+                s.product = r
+                s.total_score = 0.8
+                scored.append(s)
+            return scored
+
+        provider.rank_results.side_effect = mock_rank
+        return batch_price_materials(
+            items=items, provider=provider, supabase_client=MagicMock(), **kwargs
+        )
+
+    def test_wallpaper_product_rejected_for_granit_dinding_query(self):
+        """
+        Production case: 'granit dinding' query should not match a PVC wallpaper
+        sticker product even though every query word appears in the long title.
+        """
+        items = [{"id": "1", "description": "Granit Dinding Kolam Renang",
+                  "contractor_unit_price": 180000, "quantity": 10}]
+        products = {
+            "granit dinding kolam renang": [
+                {
+                    "name": (
+                        "280CM X 120CM MARBLE GRANIT GULUNG BESAR PVC "
+                        "WALLPEPER DINDING VINY WALLPAPER STIKER DINDING"
+                    ),
+                    "price_idr": 185000,
+                },
+            ]
+        }
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is None, "Wallpaper sticker must not match a granit query"
+        assert match.match_confidence == 0.0
+
+    def test_legitimate_granit_product_not_rejected(self):
+        """A real granite product must still be accepted for a granit query."""
+        items = [{"id": "1", "description": "Granit Dinding 60x60",
+                  "contractor_unit_price": 200000, "quantity": 5}]
+        products = {
+            "granit dinding 60x60": [
+                {"name": "Granit Dinding 60x60 Polished Premium", "price_idr": 190000},
+            ]
+        }
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is not None, "Real granit product must be accepted"
+        assert match.market_unit_price is not None
+
+    def test_wallpaper_product_accepted_for_wallpaper_query(self):
+        """
+        When the query itself contains 'wallpaper', a wallpaper product is
+        NOT rejected — the buyer is actually pricing wallpaper.
+        """
+        items = [{"id": "1", "description": "Wallpaper Dinding Premium",
+                  "contractor_unit_price": 150000, "quantity": 3}]
+        products = {
+            "wallpaper dinding premium": [
+                {"name": "Wallpaper Dinding Premium Motif Bunga 10M", "price_idr": 140000},
+            ]
+        }
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is not None, "Wallpaper product must be accepted when query requests wallpaper"
+
+    def test_sticker_token_also_triggers_rejection(self):
+        """Products containing 'stiker' (Indonesian spelling) are rejected for real material queries."""
+        items = [{"id": "1", "description": "Batu Alam Dinding",
+                  "contractor_unit_price": 250000, "quantity": 2}]
+        products = {
+            "batu alam dinding": [
+                {"name": "Stiker Dinding Motif Batu Alam 3D", "price_idr": 240000},
+            ]
+        }
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is None, "Stiker product must not match a real material query"
+
+    def test_imitasi_token_triggers_rejection(self):
+        """Products explicitly labelled 'imitasi' are rejected for real material queries."""
+        items = [{"id": "1", "description": "Kayu Solid Lantai",
+                  "contractor_unit_price": 300000, "quantity": 4}]
+        products = {
+            "kayu solid lantai": [
+                {"name": "Kayu Imitasi Lantai Vinyl PVC", "price_idr": 290000},
+            ]
+        }
+        pairs = self._run(items, products)
+        _, match = pairs[0]
+        assert match.result is None, "Imitasi product must not match a real material query"
+
+
+# =============================================================================
+# F6: Query-Simplification Fallback Tests
+# =============================================================================
+
+
+class TestSimplifyQuery:
+    """Unit tests for the simplify_query helper."""
+
+    def test_long_query_truncated_to_three_words(self):
+        assert simplify_query("keramik dinding kolam renang ex romance") == "keramik dinding kolam"
+
+    def test_exactly_four_words_returns_three(self):
+        assert simplify_query("granit dinding 60x60 premium") == "granit dinding 60x60"
+
+    def test_three_word_query_returns_empty(self):
+        """A 3-word query cannot be meaningfully simplified — return '' to skip retry."""
+        assert simplify_query("granit dinding 60x60") == ""
+
+    def test_two_word_query_returns_empty(self):
+        assert simplify_query("granit dinding") == ""
+
+    def test_one_word_query_returns_empty(self):
+        assert simplify_query("granit") == ""
+
+    def test_five_word_query(self):
+        assert simplify_query("keramik dinding kolam renang premium") == "keramik dinding kolam"
+
+
+class TestQuerySimplificationFallback:
+    """
+    When the first scrape returns zero candidates for a query, a ONE-time
+    retry is made with the first 3 tokens of the query (F6 fix).
+    """
+
+    def _make_provider(self, first_results: dict, second_results: dict) -> MagicMock:
+        """Provider that returns first_results on call 1, second_results on call 2."""
+        provider = MagicMock()
+        provider.batch_search_sync.side_effect = [first_results, second_results]
+
+        def mock_rank(results):
+            scored = []
+            for r in results:
+                s = MagicMock()
+                s.product = r
+                s.total_score = 0.8
+                scored.append(s)
+            return scored
+
+        provider.rank_results.side_effect = mock_rank
+        return provider
+
+    def test_five_word_query_retried_with_three_word_simplified(self):
+        """A 5-word query that returns nothing is retried with its first 3 words."""
+        items = [{"id": "1",
+                  "description": "Keramik Dinding Kolam Renang Ex Romance",
+                  "contractor_unit_price": 120000,
+                  "quantity": 5}]
+
+        first = {"keramik dinding kolam renang ex romance": []}
+        second = {"keramik dinding kolam": [
+            {"name": "Keramik Dinding Kolam Renang 25x40", "price_idr": 115000},
+        ]}
+
+        provider = self._make_provider(first, second)
+        pairs = batch_price_materials(
+            items=items,
+            provider=provider,
+            supabase_client=MagicMock(),
+        )
+
+        assert provider.batch_search_sync.call_count == 2
+        # Second call must use the simplified query
+        second_call_queries = provider.batch_search_sync.call_args_list[1][0][0]
+        assert second_call_queries == ["keramik dinding kolam"]
+
+        _, match = pairs[0]
+        assert match.result is not None
+        assert match.search_query == "keramik dinding kolam"
+
+    def test_short_query_not_retried(self):
+        """A query of 3 words or fewer that returns nothing is NOT retried."""
+        items = [{"id": "1", "description": "Granit Dinding",
+                  "contractor_unit_price": 200000, "quantity": 2}]
+
+        first = {"granit dinding": []}
+        provider = MagicMock()
+        provider.batch_search_sync.return_value = first
+        provider.rank_results.return_value = []
+
+        pairs = batch_price_materials(
+            items=items,
+            provider=provider,
+            supabase_client=MagicMock(),
+        )
+
+        # Only one call — no retry for a 2-word query
+        assert provider.batch_search_sync.call_count == 1
+        _, match = pairs[0]
+        assert match.result is None
+
+    def test_mixed_batch_one_ok_one_fallback(self):
+        """
+        In a batch: item A has results on first call, item B needs fallback.
+        Both should be correctly matched.
+        """
+        items = [
+            {"id": "1", "description": "Granit Lantai 60x60",
+             "contractor_unit_price": 200000, "quantity": 2},
+            {"id": "2", "description": "Keramik Dinding Kolam Renang Premium",
+             "contractor_unit_price": 90000, "quantity": 8},
+        ]
+
+        first = {
+            "granit lantai 60x60": [
+                {"name": "Granit Lantai 60x60 Glossy", "price_idr": 190000},
+            ],
+            "keramik dinding kolam renang premium": [],
+        }
+        second = {
+            "keramik dinding kolam": [
+                {"name": "Keramik Dinding Kolam 25x40", "price_idr": 85000},
+            ],
+        }
+
+        provider = self._make_provider(first, second)
+        pairs = batch_price_materials(
+            items=items,
+            provider=provider,
+            supabase_client=MagicMock(),
+        )
+
+        assert provider.batch_search_sync.call_count == 2
+
+        results = {item["id"]: match for item, match in pairs}
+
+        # Item 1 matched on first round
+        assert results["1"].result is not None
+        assert results["1"].market_unit_price == 190000 or \
+               results["1"].market_unit_price == __import__("decimal").Decimal("190000")
+
+        # Item 2 matched via fallback
+        assert results["2"].result is not None
+        assert results["2"].search_query == "keramik dinding kolam"
+
+    def test_fallback_no_results_still_no_match(self):
+        """If the retry also returns nothing, the item stays as a no-result match."""
+        items = [{"id": "1", "description": "Material Langka Tidak Dijual Online",
+                  "contractor_unit_price": 500000, "quantity": 1}]
+
+        first = {"material langka tidak dijual online": []}
+        second = {"material langka tidak": []}
+
+        provider = self._make_provider(first, second)
+        pairs = batch_price_materials(
+            items=items,
+            provider=provider,
+            supabase_client=MagicMock(),
+        )
+
+        assert provider.batch_search_sync.call_count == 2
+        _, match = pairs[0]
+        assert match.result is None
